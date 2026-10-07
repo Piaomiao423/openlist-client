@@ -1,0 +1,5 @@
+<resources>
+    <!-- Compose 应用使用代码内主题，这里仅提供无 ActionBar 的壳主题。
+         使用 DeviceDefault 跟随系统深浅色，避免强制 Light 导致白底与深色 UI 割裂 -->
+    <style name="Theme.OpenListClient" parent="android:Theme.DeviceDefault.NoActionBar" />
+</resources>

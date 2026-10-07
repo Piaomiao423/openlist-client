@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- OpenList 常以内网 HTTP 方式部署，故全局放开明文流量（有意的安全取舍） -->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true" />
+</network-security-config>

@@ -7,6 +7,7 @@ import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
@@ -14,12 +15,13 @@ import androidx.compose.ui.Modifier
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
+import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.openlist.client.ui.screen.FileBrowserScreen
-import com.openlist.client.ui.screen.FilePreviewScreen
 import com.openlist.client.ui.screen.FavoritesScreen
 import com.openlist.client.ui.screen.LoginScreen
+import com.openlist.client.ui.screen.preview.FilePreviewScreen
 import com.openlist.client.ui.theme.OpenListTheme
 
 class MainActivity : ComponentActivity() {
@@ -39,6 +41,20 @@ class MainActivity : ComponentActivity() {
                     else -> {
                         val navController = rememberNavController()
                         val start = if (authState == true) "browser" else "login"
+                        val currentEntry by navController.currentBackStackEntryAsState()
+                        val currentRoute = currentEntry?.destination?.route
+
+                        // 会话失效（Token 过期/账户被删除）时，无论当前在哪个页面都回到登录页，
+                        // 避免停留在无法加载数据的界面上。
+                        LaunchedEffect(authState, currentRoute) {
+                            if (authState == false && currentRoute != null && currentRoute != "login") {
+                                navController.navigate("login") {
+                                    popUpTo(0) { inclusive = true }
+                                    launchSingleTop = true
+                                }
+                            }
+                        }
+
                         NavHost(navController = navController, startDestination = start) {
                             composable("login") {
                                 LoginScreen(

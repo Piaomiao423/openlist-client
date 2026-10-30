@@ -19,6 +19,7 @@ object ApiClient {
         if (cached == null || baseUrl != normalized) {
             baseUrl = normalized
             val clientBuilder = OkHttpClient.Builder()
+                .addInterceptor(CleartextGuard.Interceptor())
                 .connectTimeout(15, TimeUnit.SECONDS)
                 .readTimeout(60, TimeUnit.SECONDS)
                 // 同步上传大文件可能需要较长时间，写入超时放宽到 10 分钟
@@ -43,6 +44,7 @@ object ApiClient {
     /** 大文件下载专用客户端：读超时不限时 */
     fun getDownloadClient(): OkHttpClient =
         OkHttpClient.Builder()
+            .addInterceptor(CleartextGuard.Interceptor())
             .connectTimeout(15, TimeUnit.SECONDS)
             .readTimeout(0, TimeUnit.MILLISECONDS)
             .build()

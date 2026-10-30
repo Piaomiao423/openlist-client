@@ -1,5 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- OpenList 常以内网 HTTP 方式部署，故全局放开明文流量（有意的安全取舍） -->
+<!--
+  Android 的网络安全配置不支持按 CIDR 匹配私有网段，而 OpenList 服务器地址由用户在登录时
+  填写，无法在编译期枚举，因此平台层只能保持明文传输可用。
+  真正的限制由 CleartextGuard 在运行时执行：仅私有网络/本机地址允许 HTTP，公网地址必须
+  使用 HTTPS；API、下载、Coil 图片加载与媒体流式预览都经过该校验。
+-->
 <network-security-config>
     <base-config cleartextTrafficPermitted="true" />
 </network-security-config>

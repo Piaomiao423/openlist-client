@@ -1,10 +1,11 @@
 package com.openlist.client.data.repository
 
-import android.net.Uri
 import com.openlist.client.data.model.*
 import com.openlist.client.data.remote.ApiClient
 import com.openlist.client.data.remote.OpenListApi
+import com.openlist.client.util.UrlCodec
 import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.OkHttpClient
 import okhttp3.RequestBody
 import okhttp3.RequestBody.Companion.asRequestBody
 import kotlinx.coroutines.CancellationException
@@ -26,10 +27,10 @@ data class DownloadInfo(
 class OpenListRepository(
     private val serverUrl: String,
     private val token: String,
-    private val cacheDir: File
+    private val cacheDir: File,
+    private val api: OpenListApi = ApiClient.getApi(serverUrl),
+    private val downloadClient: OkHttpClient = ApiClient.getDownloadClient()
 ) {
-
-    private val api: OpenListApi get() = ApiClient.getApi(serverUrl)
 
     private fun authHeader(): String = token
 
@@ -47,23 +48,10 @@ class OpenListRepository(
      * URL 容错编码：OpenList 直链可能含中文/空格，OkHttp 会拒绝。
      * 对路径段统一 decode→encode，query 保留签名所需字符。
      */
-    private fun encodeUrl(url: String): String {
-        return try {
-            val u = Uri.parse(url)
-            val scheme = u.scheme
-            val authority = u.authority
-            if (scheme == null || authority == null) return url
-            val path = u.path
-                ?.split('/')
-                ?.joinToString("/") { seg -> Uri.encode(Uri.decode(seg)) }
-                ?: ""
-            val query = u.query?.let {
-                "?${Uri.encode(it, "=&?%+:/,-._~!*'()")}"
-            } ?: ""
-            "$scheme://$authority$path$query"
-        } catch (e: CancellationException) { throw e } catch (e: Exception) {
-            url
-        }
+    private fun encodeUrl(url: String): String = try {
+        UrlCodec.encodeUrl(url)
+    } catch (e: CancellationException) { throw e } catch (e: Exception) {
+        url
     }
 
     /** 解析 OpenList 返回的 header 字段（JSON 字符串 → Map） */
@@ -119,11 +107,7 @@ class OpenListRepository(
             // 继续兜底
         }
         // 方式三：/p/ 代理路由（服务器代理转发，仅需认证头）
-        val proxyPath = path
-            .split('/')
-            .joinToString("/") { seg ->
-                if (seg.isEmpty()) "" else Uri.encode(Uri.decode(seg))
-            }
+        val proxyPath = UrlCodec.encodePath(path).trimStart('/')
         candidates += DownloadInfo(
             url = "${serverUrl.trimEnd('/')}/p/$proxyPath",
             headers = emptyMap(),
@@ -140,7 +124,11 @@ class OpenListRepository(
     }
 
     /** 获取下载信息（直链 + 需携带请求头），供流式预览/下载使用 */
-    suspend fun getDownloadInfo(path: String): Result<DownloadInfo> = resolveDownload(path)
+    suspend fun getDownloadInfo(path: String): Result<DownloadInfo> = try {
+        resolveDownload(path)
+    } catch (e: CancellationException) { throw e } catch (e: Exception) {
+        Result.failure(e)
+    }
 
     /** 获取下载链接（用于列表页 Toast 展示） */
     suspend fun getDownloadUrl(path: String): Result<String> = try {
@@ -161,7 +149,7 @@ class OpenListRepository(
             .takeIf { it.isNotEmpty() && it.length <= 10 && it.all { c -> c.isLetterOrDigit() } }
             ?: ""
         val previewDir = File(cacheDir, "preview").apply { mkdirs() }
-        val client = ApiClient.getDownloadClient()
+        val client = downloadClient
         val errors = mutableListOf<String>()
 
         for ((index, info) in candidates.withIndex()) {
@@ -222,10 +210,7 @@ class OpenListRepository(
     }
 
     /** AList/OpenList 要求 File-Path 为 URL 编码的完整路径（保留 / 分隔符） */
-    private fun encodeFilePath(path: String): String =
-        path.split('/').joinToString("/") { seg ->
-            if (seg.isEmpty()) "" else Uri.encode(Uri.decode(seg))
-        }
+    private fun encodeFilePath(path: String): String = UrlCodec.encodePath(path)
 
     /**
      * 上传（多层防御，杜绝"假成功"）：

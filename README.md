@@ -42,18 +42,35 @@ APK 输出：`app/build/outputs/apk/debug/app-debug.apk`。
 2. 打开 App，输入服务器地址（如 `http://192.168.1.100:5244`）、用户名、密码
 3. 登录后即可浏览和操作文件
 
-自建服务通常为内网 HTTP 明文，`network_security_config.xml` 全局放开了明文流量（有意的安全取舍），使用 https 部署时可自行收紧。
+### 明文传输策略
+
+自建服务通常为内网 HTTP。Android 的网络安全配置不支持按私有网段（CIDR）匹配，而服务器地址由用户登录时填写，无法在编译期枚举，因此平台层保持明文可用，实际限制由 `CleartextGuard` 在运行时执行：
+
+- 私有网络 / 本机地址（`10/8`、`172.16/12`、`192.168/16`、`169.254/16`、回环、`*.local` 等内网主机名）允许 HTTP
+- 公网地址必须使用 HTTPS，否则请求会被拒绝并提示
+- API、下载、Coil 图片加载、视频/音频流式预览均应用同一策略
+
+公网部署请直接使用 HTTPS。
 
 ## 项目结构
 
 ```
 app/src/main/java/com/openlist/client/
 ├── data/          # 数据层：模型、Retrofit 接口、仓库（下载候选逐级重试、上传完整性校验）
-├── ui/screen/     # 登录 / 文件浏览 / 预览 / 收藏界面
+├── ui/screen/     # 登录 / 文件浏览 / 收藏界面
+│   └── preview/   # 文件预览（按类型拆分为图片/代码/PDF/音频/视频/压缩包）
 ├── ui/viewmodel/  # ViewModel
 ├── ui/theme/      # 主题与自适应尺寸
-└── util/          # 会话管理、编码检测、语法高亮等工具
+└── util/          # 会话管理、URL 编解码、编码检测、语法高亮等工具
 ```
+
+## 测试
+
+```bash
+./gradlew testDebugUnitTest
+```
+
+覆盖 URL 编解码、明文 HTTP 策略，以及仓库层（文件列表 / 搜索 / 下载链接回退 / 下载缓存 / 上传轮询与大小校验）。
 
 ## License
 

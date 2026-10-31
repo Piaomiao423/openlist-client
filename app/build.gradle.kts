@@ -20,8 +20,8 @@ android {
         applicationId = "com.openlist.client"
         minSdk = 26
         targetSdk = 34
-        versionCode = 4
-        versionName = "1.2.1"
+        versionCode = 5
+        versionName = "1.2.2"
     }
 
     signingConfigs {
@@ -98,6 +98,11 @@ dependencies {
     // 图片/GIF 加载
     implementation("io.coil-kt:coil-compose:2.5.0")
     implementation("io.coil-kt:coil-gif:2.5.0")
+
+    // 视频播放：应用内 OkHttp 取流（系统 MediaPlayer 的网络线程部分设备不可用）
+    implementation("androidx.media3:media3-exoplayer:1.3.1")
+    implementation("androidx.media3:media3-datasource-okhttp:1.3.1")
+    implementation("androidx.media3:media3-ui:1.3.1")
 
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.7.3")

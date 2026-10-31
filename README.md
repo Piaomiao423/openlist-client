@@ -37,35 +37,6 @@
 
 APK 输出：`app/build/outputs/apk/debug/app-debug.apk`。
 
-### Release 签名
-
-`app/build.gradle.kts` 会读取根目录的 `keystore.properties`（已在 `.gitignore` 中，不随仓库分发）：
-
-```properties
-storeFile=keystore/openlist-release.keystore
-storePassword=<你的口令>
-keyAlias=openlist
-keyPassword=<你的口令>
-```
-
-缺少该文件时 release 仍可编译，但产物未签名（`app-release-unsigned.apk`），仅供本地验证。
-
-生成新密钥库：
-
-```bash
-keytool -genkeypair -keystore keystore/openlist-release.keystore -storetype PKCS12 \
-  -alias openlist -keyalg RSA -keysize 2048 -validity 10000
-```
-
-构建与校验：
-
-```bash
-./gradlew assembleRelease
-apksigner verify --print-certs app/build/outputs/apk/release/app-release.apk
-```
-
-> `keystore/` 与 `keystore.properties` 必须妥善备份：密钥库丢失后将无法发布可覆盖安装的更新；泄露则他人可伪造更新包。
-
 ## 使用
 
 1. 部署好 OpenList 服务（默认监听 5244 端口）

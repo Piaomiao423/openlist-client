@@ -79,7 +79,12 @@ fun ServersScreen(
     var showLogoutConfirm by remember { mutableStateOf(false) }
 
     fun switchTo(account: Account) {
-        if (busy || account.id == active?.id) return
+        if (busy) return
+        // 当前服务器也允许点击，用于从服务器列表进入浏览页
+        if (account.id == active?.id) {
+            onSwitched()
+            return
+        }
         busy = true
         error = null
         scope.launch {
@@ -134,7 +139,7 @@ fun ServersScreen(
                 LinearProgressIndicator(Modifier.fillMaxWidth())
             }
             Text(
-                if (active != null) "点击服务器即可切换，无需重新登录" else "选择一个已保存的服务器，或添加新服务器",
+                if (active != null) "点击当前服务器进入，点击其他服务器切换（无需重新登录）" else "选择一个已保存的服务器，或添加新服务器",
                 style = MaterialTheme.typography.bodyMedium.copy(fontSize = dims.smallSize),
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(horizontal = dims.screenPadding, vertical = dims.spacingMedium)
@@ -186,7 +191,7 @@ fun ServersScreen(
                         val isActive = account.id == active?.id
                         Card(
                             onClick = { switchTo(account) },
-                            enabled = !isActive && !busy,
+                            enabled = !busy,
                             colors = CardDefaults.cardColors(
                                 containerColor = if (isActive) {
                                     MaterialTheme.colorScheme.secondaryContainer

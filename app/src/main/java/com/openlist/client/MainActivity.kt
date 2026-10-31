@@ -42,7 +42,6 @@ class MainActivity : ComponentActivity() {
                     }
                     else -> {
                         val navController = rememberNavController()
-                        val start = if (authState == true) "browser" else "servers"
                         val currentEntry by navController.currentBackStackEntryAsState()
                         val currentRoute = currentEntry?.destination?.route
 
@@ -70,7 +69,8 @@ class MainActivity : ComponentActivity() {
                             }
                         }
 
-                        NavHost(navController = navController, startDestination = start) {
+                        // 每次启动都先进入服务器列表，即使本地已有登录会话
+                        NavHost(navController = navController, startDestination = "servers") {
                             composable("login") {
                                 LoginScreen(
                                     sessionManager = app.sessionManager,
@@ -107,8 +107,8 @@ class MainActivity : ComponentActivity() {
                             composable("servers") {
                                 ServersScreen(
                                     sessionManager = app.sessionManager,
-                                    // 未登录时服务器列表是启动页，不显示返回
-                                    onBack = if (authState == true) {
+                                    // 启动时服务器列表是根页面，无返回；从浏览页进入时可返回
+                                    onBack = if (navController.previousBackStackEntry != null) {
                                         { navController.popBackStack() }
                                     } else {
                                         null

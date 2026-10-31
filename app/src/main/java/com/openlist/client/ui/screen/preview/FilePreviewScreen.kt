@@ -49,7 +49,7 @@ import java.io.File
 /** 预览界面状态 */
 private sealed interface PreviewUiState {
     object Loading : PreviewUiState
-    /** 直链流式预览（图片/视频/音频，与网页端一致，无需下载整个文件） */
+    /** 直链流式预览（图片/视频，与网页端一致，无需下载整个文件） */
     data class StreamReady(val url: String, val fileType: String) : PreviewUiState
     /** 已下载到本地缓存（文本/PDF/需带请求头的第三方直链） */
     data class FileReady(val file: File, val fileType: String) : PreviewUiState
@@ -61,7 +61,7 @@ private sealed interface PreviewUiState {
  * - 图片/GIF：Coil 加载（GIF 动图自动播放）
  * - 文本：等宽字体滚动
  * - PDF：官方 PdfRenderer 逐页渲染
- * - 音频：MediaPlayer 播放/暂停/进度
+ * - 音频：先下载到缓存，再由 MediaPlayer 本地播放
  * - 视频：VideoView 内嵌播放
  * 其他类型提示不支持（列表页仍可获取下载链接）。
  */
@@ -114,28 +114,36 @@ fun FilePreviewScreen(
                 value = PreviewUiState.Error(e.message ?: "加载失败")
             }
         }
-        // 图片/视频/音频：优先用 /api/fs/link 的签名直链流式加载（网页端同款，大文件秒开）；
-        // 直链不可用、为第三方链接或公网明文地址时才下载到缓存。
-        val streamable = isImageFile(fileType) || isVideoFile(fileType) || isAudioFile(fileType)
-        val info = withContext(Dispatchers.IO) { repository.getDownloadInfo(filePath) }
-        info.fold(
-            onSuccess = { downloadInfo ->
-                // 需认证的直链（/p/ 代理路由）无法被播放器流式加载，走下载缓存；
-                // 公网 HTTP 直链会被媒体组件绕过 OkHttp，因此这里同样按明文策略拦截。
-                val streamAllowed = streamable && !downloadInfo.requiresAuth &&
-                    downloadInfo.url.startsWith(serverUrl) &&
-                    CleartextGuard.isAllowed(downloadInfo.url)
-                if (streamAllowed) {
-                    value = PreviewUiState.StreamReady(downloadInfo.url, fileType)
-                } else {
-                    withContext(Dispatchers.IO) { repository.downloadToCache(filePath) }.fold(
-                        onSuccess = { file -> value = PreviewUiState.FileReady(file, fileType) },
-                        onFailure = { onFail(it) }
-                    )
-                }
-            },
-            onFailure = { onFail(it) }
-        )
+        try {
+            // 图片/视频：优先用 /api/fs/link 的签名直链流式加载（网页端同款，大文件秒开）；
+            // 直链不可用、为第三方链接或公网明文地址时才下载到缓存。
+            // 音频例外：一律下载后本地播放，避免 MediaPlayer 直接请求网络直链导致原生层闪退。
+            val streamable = isImageFile(fileType) || isVideoFile(fileType)
+            val info = withContext(Dispatchers.IO) { repository.getDownloadInfo(filePath) }
+            info.fold(
+                onSuccess = { downloadInfo ->
+                    // 需认证的直链（/p/ 代理路由）无法被播放器流式加载，走下载缓存；
+                    // 公网 HTTP 直链会被媒体组件绕过 OkHttp，因此这里同样按明文策略拦截。
+                    val streamAllowed = streamable && !downloadInfo.requiresAuth &&
+                        downloadInfo.url.startsWith(serverUrl) &&
+                        CleartextGuard.isAllowed(downloadInfo.url)
+                    if (streamAllowed) {
+                        value = PreviewUiState.StreamReady(downloadInfo.url, fileType)
+                    } else {
+                        withContext(Dispatchers.IO) { repository.downloadToCache(filePath) }.fold(
+                            onSuccess = { file -> value = PreviewUiState.FileReady(file, fileType) },
+                            onFailure = { onFail(it) }
+                        )
+                    }
+                },
+                onFailure = { onFail(it) }
+            )
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            // 预览链路里的任何意外异常都收敛到错误页，避免直接崩溃退出
+            onFail(e)
+        }
     }
 
     val fileName = filePath.substringAfterLast('/')
@@ -185,7 +193,6 @@ fun FilePreviewScreen(
                 is PreviewUiState.StreamReady -> when {
                     isImageFile(state.fileType) -> ImagePreview(state.url)
                     isVideoFile(state.fileType) -> VideoPreview(state.url)
-                    isAudioFile(state.fileType) -> AudioPreview(state.url)
                     else -> UnsupportedHint(dims.bodySize)
                 }
 

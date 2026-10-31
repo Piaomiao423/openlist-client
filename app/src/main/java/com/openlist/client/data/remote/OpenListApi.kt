@@ -48,7 +48,7 @@ interface OpenListApi {
         @Header("Authorization") token: String
     ): Response<ApiResponse<Unit>>
 
-    @POST("/api/search")
+    @POST("/api/fs/search")
     suspend fun search(
         @Body request: SearchRequest,
         @Header("Authorization") token: String

@@ -25,6 +25,7 @@ import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -47,6 +48,7 @@ import com.openlist.client.util.FavoritesManager
 import com.openlist.client.util.SessionManager
 import com.openlist.client.util.isPreviewableFile
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -107,13 +109,12 @@ fun FileBrowserScreen(
     val listState = rememberLazyListState()
 
     // 目录/搜索状态变化后恢复记住的滚动位置（仅浏览模式，搜索模式不恢复）
-    LaunchedEffect(state.currentPath, state.searchMode) {
-        if (!state.searchMode) {
-            viewModel.restoreScroll(state.currentPath)?.let { (index, offset) ->
-                val total = listState.layoutInfo.totalItemsCount
-                if (total > 0) listState.scrollToItem(index.coerceIn(0, total - 1), offset)
-            }
-        }
+    LaunchedEffect(state.currentPath, state.searchMode, state.isLoading) {
+        if (state.searchMode || state.isLoading) return@LaunchedEffect
+        val saved = viewModel.restoreScroll(state.currentPath) ?: return@LaunchedEffect
+        // 列表完成布局前 totalItemsCount 仍为 0，等有数据后再滚动
+        val total = snapshotFlow { listState.layoutInfo.totalItemsCount }.first { it > 0 }
+        listState.scrollToItem(saved.first.coerceIn(0, total - 1), saved.second)
     }
 
     var showSearch by rememberSaveable { mutableStateOf(false) }
@@ -139,6 +140,7 @@ fun FileBrowserScreen(
                 if (file != null) {
                     viewModel.uploadFile(file) { ok, msg ->
                         uploading = false
+                        file.delete()
                         Toast.makeText(
                             context,
                             if (ok) "上传成功" else (msg ?: "上传失败"),
@@ -184,6 +186,17 @@ fun FileBrowserScreen(
     fun fullPath(item: FileItem): String {
         val current = state.currentPath
         return if (current == "/") "/${item.name}" else "$current/${item.name}"
+    }
+
+    /** 搜索结果里 name 只是文件名，完整路径由 parent 拼接；浏览模式则由当前目录拼接 */
+    fun pathOf(item: FileItem): String {
+        if (state.searchMode) {
+            val name = item.name
+            if (name.startsWith("/")) return name
+            val parent = item.parent.orEmpty().trimEnd('/')
+            return if (parent.isEmpty()) "/$name" else "$parent/$name"
+        }
+        return fullPath(item)
     }
 
     BackHandler(enabled = state.searchMode || state.currentPath != "/") {
@@ -342,10 +355,12 @@ fun FileBrowserScreen(
                         style = MaterialTheme.typography.bodyMedium.copy(fontSize = dims.bodySize)
                     )
                     else -> LazyColumn(state = listState, modifier = Modifier.fillMaxSize()) {
-                        items(state.items, key = { "${it.name}_${it.isDir}" }) { item ->
+                        // 不设置自定义 key：搜索结果可能重名，重复 key 会直接抛异常退出
+                        items(state.items) { item ->
                             FileItemRow(
                                 item = item,
-                                isFavorite = favorites.contains(fullPath(item)),
+                                isFavorite = !item.isDir && favorites.contains(pathOf(item)),
+                                parentHint = if (state.searchMode) item.parent else null,
                                 onClick = {
                                     if (item.isDir) {
                                         if (state.searchMode) {
@@ -355,11 +370,7 @@ fun FileBrowserScreen(
                                             viewModel.openDirectory(item)
                                         }
                                     } else {
-                                        val filePath = if (state.searchMode) {
-                                            if (item.name.startsWith("/")) item.name else "/${item.name}"
-                                        } else {
-                                            fullPath(item)
-                                        }
+                                        val filePath = pathOf(item)
                                         if (isPreviewableFile(item.fileExtension)) {
                                             onOpenPreview(filePath)
                                         } else {
@@ -378,11 +389,11 @@ fun FileBrowserScreen(
                                 onMenuDismiss = { menuItem = null },
                                 onMenuPreview = {
                                     menuItem = null
-                                    onOpenPreview(fullPath(item))
+                                    onOpenPreview(pathOf(item))
                                 },
                                 onMenuDownloadLink = {
                                     menuItem = null
-                                    viewModel.getDownloadUrl(fullPath(item)) { url ->
+                                    viewModel.getDownloadUrl(pathOf(item)) { url ->
                                         Toast.makeText(
                                             context,
                                             if (url != null) "下载链接: $url" else "无法获取下载链接",
@@ -408,8 +419,10 @@ fun FileBrowserScreen(
                                 },
                                 onMenuFavorite = {
                                     menuItem = null
-                                    scope.launch {
-                                        favoritesManager.toggle(serverUrl, fullPath(item))
+                                    if (!item.isDir) {
+                                        scope.launch {
+                                            favoritesManager.toggle(serverUrl, pathOf(item))
+                                        }
                                     }
                                 }
                             )
@@ -513,10 +526,18 @@ private fun NameInputDialog(
 private fun copyUriToCache(context: Context, uri: Uri): File? {
     return try {
         val resolver = context.contentResolver
-        val name = resolver.query(uri, null, null, null, null)?.use { c ->
+        val rawName = resolver.query(uri, null, null, null, null)?.use { c ->
             val idx = c.getColumnIndex(OpenableColumns.DISPLAY_NAME)
             if (idx >= 0 && c.moveToFirst()) c.getString(idx) else null
-        } ?: "upload_${System.currentTimeMillis()}"
+        }
+        // 提供方返回的名称不可信：去掉路径分隔符，避免写到缓存目录之外
+        val name = rawName
+            ?.substringAfterLast('/')
+            ?.substringAfterLast('\\')
+            ?.replace("\u0000", "")
+            ?.trim()
+            ?.takeUnless { it == "." || it == ".." || it.isBlank() }
+            ?: "upload_${System.currentTimeMillis()}"
         val dir = File(context.cacheDir, "upload").apply { mkdirs() }
         val target = File(dir, name)
         resolver.openInputStream(uri)?.use { input ->
@@ -562,6 +583,7 @@ private suspend fun doDownload(
 private fun FileItemRow(
     item: FileItem,
     isFavorite: Boolean,
+    parentHint: String?,
     onClick: () -> Unit,
     onLongClick: () -> Unit,
     menuExpanded: Boolean,
@@ -586,9 +608,15 @@ private fun FileItemRow(
                 )
             },
             supportingContent = {
-                if (!item.isDir) {
+                val hint = listOfNotNull(
+                    parentHint?.takeIf { it.isNotBlank() },
+                    item.displaySize.takeIf { !item.isDir && it.isNotBlank() }
+                ).joinToString(" · ")
+                if (hint.isNotEmpty()) {
                     Text(
-                        item.displaySize,
+                        hint,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
                         style = MaterialTheme.typography.labelSmall.copy(fontSize = dims.smallSize)
                     )
                 }
@@ -654,10 +682,12 @@ private fun FileItemRow(
                 text = { Text("属性") },
                 onClick = onMenuProperties
             )
-            DropdownMenuItem(
-                text = { Text(if (isFavorite) "取消收藏" else "收藏") },
-                onClick = onMenuFavorite
-            )
+            if (!item.isDir) {
+                DropdownMenuItem(
+                    text = { Text(if (isFavorite) "取消收藏" else "收藏") },
+                    onClick = onMenuFavorite
+                )
+            }
         }
     }
 }
@@ -690,7 +720,7 @@ private fun PropertiesDialog(item: FileItem, path: String, onDismiss: () -> Unit
                 if (!item.isDir) {
                     PropertyRow("大小", item.displaySize.ifBlank { "${item.size} 字节" })
                 }
-                PropertyRow("修改时间", item.modified.ifBlank { "未知" })
+                PropertyRow("修改时间", item.modified?.ifBlank { "未知" } ?: "未知")
                 item.created?.takeIf { it.isNotBlank() }?.let { PropertyRow("创建时间", it) }
                 item.sign?.takeIf { it.isNotBlank() }?.let { PropertyRow("签名", it) }
                 item.hashInfo?.takeIf { it.isNotBlank() }?.let { PropertyRow("哈希", it) }

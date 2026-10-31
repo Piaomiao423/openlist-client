@@ -5,6 +5,7 @@ import androidx.lifecycle.viewModelScope
 import com.openlist.client.data.model.FileItem
 import com.openlist.client.data.repository.OpenListRepository
 import com.openlist.client.data.repository.UnauthorizedException
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
@@ -29,6 +30,9 @@ class FileListViewModel(
 
     private val pathStack = ArrayDeque<String>()
 
+    /** 当前列表/搜索请求；新请求会取消旧请求，避免旧结果覆盖新目录 */
+    private var loadJob: Job? = null
+
     /** 各目录的滚动位置记忆：path -> (firstVisibleItemIndex, scrollOffset)，返回上级时恢复 */
     private val scrollMemory = HashMap<String, Pair<Int, Int>>()
 
@@ -45,8 +49,9 @@ class FileListViewModel(
     }
 
     fun loadDirectory(path: String) {
+        loadJob?.cancel()
         _uiState.value = _uiState.value.copy(isLoading = true, error = null, searchMode = false)
-        viewModelScope.launch {
+        loadJob = viewModelScope.launch {
             repository.listFiles(path).fold(
                 onSuccess = { items ->
                     val sorted = sortItems(items)
@@ -95,13 +100,14 @@ class FileListViewModel(
     fun search(keywords: String) {
         val kw = keywords.trim()
         if (kw.isEmpty()) return
+        loadJob?.cancel()
         _uiState.value = _uiState.value.copy(
             isLoading = true,
             error = null,
             searchMode = true,
             searchKeyword = kw
         )
-        viewModelScope.launch {
+        loadJob = viewModelScope.launch {
             repository.search(kw).fold(
                 onSuccess = { items ->
                     _uiState.value = _uiState.value.copy(

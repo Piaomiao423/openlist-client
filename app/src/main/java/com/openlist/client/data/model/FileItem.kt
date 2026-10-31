@@ -7,12 +7,14 @@ data class FileItem(
     @SerializedName("name") val name: String,
     @SerializedName("size") val size: Long,
     @SerializedName("is_dir") val isDir: Boolean,
-    @SerializedName("modified") val modified: String,
+    @SerializedName("modified") val modified: String?,
     @SerializedName("created") val created: String?,
     @SerializedName("sign") val sign: String?,
     @SerializedName("thumb") val thumb: String?,
     @SerializedName("type") val type: Int,
-    @SerializedName("hashinfo") val hashInfo: String?
+    @SerializedName("hashinfo") val hashInfo: String?,
+    /** 仅搜索结果返回：文件所在目录（name 是文件名，不含路径） */
+    @SerializedName("parent") val parent: String? = null
 ) {
     val displaySize: String
         get() = when {

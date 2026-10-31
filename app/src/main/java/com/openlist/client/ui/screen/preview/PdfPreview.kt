@@ -43,10 +43,12 @@ internal fun PdfPreview(file: File) {
     var error by remember(file) { mutableStateOf<String?>(null) }
 
     val renderer = remember(file) {
+        var pfd: ParcelFileDescriptor? = null
         try {
-            val pfd = ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY)
+            pfd = ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY)
             PdfRenderer(pfd)
         } catch (e: Exception) {
+            runCatching { pfd?.close() }
             null
         }
     }
@@ -60,9 +62,9 @@ internal fun PdfPreview(file: File) {
             error = "无法打开 PDF"
             return@LaunchedEffect
         }
-        pageCount = renderer.pageCount
         bitmap = withContext(Dispatchers.IO) {
             try {
+                pageCount = renderer.pageCount
                 val page = renderer.openPage(pageIndex)
                 try {
                     val scale = 1.5f

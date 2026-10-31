@@ -107,9 +107,12 @@ class OpenListRepositoryTest {
         val result = newRepository().search("mp4", "/media")
 
         assertEquals("match.mp4", result.getOrThrow().single().name)
-        val body = server.takeRequest().body.readUtf8()
+        val request = server.takeRequest()
+        assertEquals("/api/fs/search", request.path?.substringBefore('?'))
+        val body = request.body.readUtf8()
         assertTrue(body.contains("\"keywords\":\"mp4\""))
         assertTrue(body.contains("\"parent\":\"/media\""))
+        assertTrue(body.contains("\"per_page\":200"))
     }
 
     // ===== 下载链接解析 =====

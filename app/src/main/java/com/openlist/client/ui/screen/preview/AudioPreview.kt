@@ -1,5 +1,6 @@
 package com.openlist.client.ui.screen.preview
 
+import android.media.AudioAttributes
 import android.media.MediaPlayer
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -34,67 +35,98 @@ import kotlinx.coroutines.delay
 import java.io.File
 import java.util.Locale
 
-/** 音频预览：播放/暂停 + 进度条（本地文件） */
+/**
+ * 音频预览：播放/暂停 + 拖动进度。
+ *
+ * 只播放已下载到本地的缓存文件，不把网络直链交给 MediaPlayer：
+ * 部分服务器的签名直链/重定向会让 MediaPlayer 原生层直接异常退出（闪退），
+ * 下载后本地播放可绕开整条网络播放链路。
+ */
 @Composable
 internal fun AudioPreview(file: File) {
-    var error by remember(file) { mutableStateOf(false) }
+    var error by remember(file) { mutableStateOf<String?>(null) }
+    var ready by remember(file) { mutableStateOf(false) }
     var playing by remember(file) { mutableStateOf(false) }
+    var completed by remember(file) { mutableStateOf(false) }
     var duration by remember(file) { mutableLongStateOf(0L) }
     var position by remember(file) { mutableLongStateOf(0L) }
+    var seeking by remember(file) { mutableStateOf(false) }
+    var seekTarget by remember(file) { mutableLongStateOf(0L) }
 
     val player = remember(file) {
         MediaPlayer().apply {
             try {
+                setAudioAttributes(
+                    AudioAttributes.Builder()
+                        .setUsage(AudioAttributes.USAGE_MEDIA)
+                        .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
+                        .build()
+                )
+                setOnPreparedListener { mp ->
+                    duration = runCatching { mp.duration.toLong() }.getOrDefault(0L).coerceAtLeast(0L)
+                    ready = true
+                    completed = false
+                    position = 0L
+                    runCatching {
+                        mp.start()
+                        playing = true
+                    }.onFailure {
+                        // 解码/输出失败只影响本页，不能让异常抛到主线程
+                        error = "无法播放该音频（解码失败）"
+                    }
+                }
+                setOnCompletionListener {
+                    playing = false
+                    completed = true
+                    position = duration
+                }
+                setOnErrorListener { _, what, extra ->
+                    playing = false
+                    error = "无法播放该音频（错误码 $what/$extra）"
+                    true
+                }
                 setDataSource(file.absolutePath)
-                prepare()
-                if (this.duration <= 0) error = true
+                prepareAsync()
             } catch (e: Exception) {
-                error = true
+                error = "无法播放该音频"
             }
         }
     }
 
-    DisposableEffect(Unit) {
+    DisposableEffect(player) {
         onDispose {
-            try {
-                if (player.isPlaying) player.stop()
-            } catch (e: Exception) {
-            }
-            player.release()
+            runCatching { if (player.isPlaying) player.stop() }
+            runCatching { player.reset() }
+            runCatching { player.release() }
         }
     }
 
-    LaunchedEffect(Unit) {
-        try {
-            duration = player.duration.toLong().coerceAtLeast(0)
-        } catch (e: Exception) {
-        }
-    }
-
-    LaunchedEffect(playing) {
-        while (playing) {
-            try {
-                position = player.currentPosition.toLong().coerceAtMost(duration)
-            } catch (e: Exception) {
+    // 播放中轮询进度；拖动进度条时暂停轮询，避免滑块被回弹
+    LaunchedEffect(playing, seeking) {
+        while (playing && !seeking) {
+            runCatching { player.currentPosition.toLong() }.getOrNull()?.let { pos ->
+                position = if (duration > 0L) pos.coerceIn(0L, duration) else pos.coerceAtLeast(0L)
             }
             delay(300)
         }
     }
 
     fun toggle() {
-        if (error) return
+        if (error != null || !ready) return
         if (playing) {
-            try {
-                player.pause()
-            } catch (e: Exception) {
-            }
+            runCatching { player.pause() }
             playing = false
         } else {
-            try {
+            runCatching {
+                if (completed || (duration > 0L && position >= duration)) {
+                    player.seekTo(0)
+                    position = 0L
+                }
                 player.start()
                 playing = true
-            } catch (e: Exception) {
-                error = true
+                completed = false
+            }.onFailure {
+                error = "无法播放该音频"
             }
         }
     }
@@ -104,91 +136,10 @@ internal fun AudioPreview(file: File) {
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {
-        if (error) {
+        val message = error
+        if (message != null) {
             Text(
-                "无法播放该音频",
-                color = MaterialTheme.colorScheme.error,
-                style = MaterialTheme.typography.bodyMedium
-            )
-            return@Column
-        }
-        AudioControls(
-            playing = playing,
-            position = position,
-            duration = duration,
-            onSeek = { pos ->
-                position = pos
-                try {
-                    player.seekTo(position.toInt())
-                } catch (e: Exception) {
-                }
-            },
-            onToggle = { toggle() }
-        )
-    }
-}
-
-/** 音频流式预览：MediaPlayer 异步加载签名直链（可拖动进度） */
-@Composable
-internal fun AudioPreview(url: String) {
-    var error by remember(url) { mutableStateOf(false) }
-    var playing by remember(url) { mutableStateOf(false) }
-    var ready by remember(url) { mutableStateOf(false) }
-    var duration by remember(url) { mutableLongStateOf(0L) }
-    var position by remember(url) { mutableLongStateOf(0L) }
-
-    val player = remember(url) {
-        MediaPlayer().apply {
-            try {
-                setDataSource(url)
-                setOnPreparedListener { mp ->
-                    duration = mp.duration.toLong().coerceAtLeast(0)
-                    ready = true
-                    try {
-                        mp.start()
-                        playing = true
-                    } catch (e: Exception) {
-                    }
-                }
-                setOnErrorListener { _, _, _ -> error = true; true }
-                prepareAsync()
-            } catch (e: Exception) {
-                error = true
-            }
-        }
-    }
-
-    DisposableEffect(Unit) {
-        onDispose {
-            try {
-                if (player.isPlaying) player.stop()
-            } catch (e: Exception) {
-            }
-            try {
-                player.release()
-            } catch (e: Exception) {
-            }
-        }
-    }
-
-    LaunchedEffect(playing) {
-        while (playing) {
-            try {
-                position = player.currentPosition.toLong().coerceAtMost(duration)
-            } catch (e: Exception) {
-            }
-            delay(300)
-        }
-    }
-
-    Column(
-        Modifier.fillMaxSize(),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center
-    ) {
-        if (error) {
-            Text(
-                "无法播放该音频",
+                message,
                 color = MaterialTheme.colorScheme.error,
                 style = MaterialTheme.typography.bodyMedium
             )
@@ -198,32 +149,26 @@ internal fun AudioPreview(url: String) {
             CircularProgressIndicator()
             return@Column
         }
+        val displayPosition = if (seeking) seekTarget else position
+        val max = duration.coerceAtLeast(1L)
         AudioControls(
             playing = playing,
-            position = position,
+            position = displayPosition,
             duration = duration,
-            onSeek = { pos ->
-                position = pos
-                try {
-                    player.seekTo(position.toInt())
-                } catch (e: Exception) {
-                }
+            enabled = duration > 0L,
+            onSeekStart = { value ->
+                seeking = true
+                seekTarget = value
             },
-            onToggle = {
-                if (playing) {
-                    try {
-                        player.pause()
-                    } catch (e: Exception) {
-                    }
-                    playing = false
-                } else {
-                    try {
-                        player.start()
-                        playing = true
-                    } catch (e: Exception) {
-                    }
-                }
-            }
+            onSeekFinished = {
+                val target = seekTarget.coerceIn(0L, duration)
+                position = target
+                seeking = false
+                completed = false
+                runCatching { player.seekTo(target.toInt()) }
+            },
+            onToggle = { toggle() },
+            sliderMax = max
         )
     }
 }
@@ -233,7 +178,10 @@ private fun AudioControls(
     playing: Boolean,
     position: Long,
     duration: Long,
-    onSeek: (Long) -> Unit,
+    enabled: Boolean,
+    sliderMax: Long,
+    onSeekStart: (Long) -> Unit,
+    onSeekFinished: () -> Unit,
     onToggle: () -> Unit
 ) {
     Icon(
@@ -244,8 +192,11 @@ private fun AudioControls(
     )
     Spacer(Modifier.height(24.dp))
     Slider(
-        value = position.toFloat().coerceIn(0f, duration.toFloat().coerceAtLeast(1f)),
-        onValueChange = { pos -> onSeek(pos.toLong()) },
+        value = position.toFloat().coerceIn(0f, sliderMax.toFloat()),
+        onValueChange = { onSeekStart(it.toLong()) },
+        onValueChangeFinished = onSeekFinished,
+        valueRange = 0f..sliderMax.toFloat(),
+        enabled = enabled,
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 24.dp)

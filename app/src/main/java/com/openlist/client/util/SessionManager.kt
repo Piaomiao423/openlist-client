@@ -9,6 +9,7 @@ import com.openlist.client.data.remote.ApiClient
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -63,7 +64,8 @@ class SessionManager(private val context: Context) {
 
     suspend fun login(serverUrl: String, username: String, password: String): Result<Unit> {
         return try {
-            val normalizedUrl = serverUrl.trim().trimEnd('/')
+            val normalizedUrl = normalizeServerUrl(serverUrl)
+                ?: return Result.failure(Exception("服务器地址格式不正确"))
             val api = ApiClient.getApi(normalizedUrl)
             val response = api.login(LoginRequest(username.trim(), password))
             if (response.isSuccessful) {
@@ -123,6 +125,22 @@ class SessionManager(private val context: Context) {
     }
 
     // ===== JSON 编解码 =====
+
+    /** 补全协议并校验服务器地址；非法地址返回 null */
+    private fun normalizeServerUrl(raw: String): String? {
+        val trimmed = raw.trim()
+        if (trimmed.isEmpty()) return null
+        val withScheme = if (trimmed.startsWith("http://", true) ||
+            trimmed.startsWith("https://", true)
+        ) {
+            trimmed
+        } else {
+            "http://$trimmed"
+        }
+        val host = withScheme.toHttpUrlOrNull()?.host ?: return null
+        if (host.isBlank()) return null
+        return withScheme.trimEnd('/')
+    }
 
     private fun encode(accounts: List<Account>): String = JSONArray().apply {
         accounts.forEach { acc ->

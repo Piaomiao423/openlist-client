@@ -14,10 +14,11 @@ internal fun VideoPreview(file: File) {
     AndroidView(
         factory = { ctx ->
             VideoView(ctx).apply {
-                setVideoPath(file.absolutePath)
+                setOnPreparedListener { mp -> mp.isLooping = false; start() }
+                setOnErrorListener { _, _, _ -> true }
                 setMediaController(MediaController(ctx))
                 requestFocus()
-                setOnPreparedListener { mp -> mp.isLooping = false; start() }
+                runCatching { setVideoPath(file.absolutePath) }
             }
         },
         modifier = Modifier.fillMaxSize()
@@ -30,11 +31,11 @@ internal fun VideoPreview(url: String) {
     AndroidView(
         factory = { ctx ->
             VideoView(ctx).apply {
-                setVideoURI(android.net.Uri.parse(url))
-                setMediaController(MediaController(ctx))
-                requestFocus()
                 setOnPreparedListener { mp -> mp.isLooping = false; start() }
                 setOnErrorListener { _, _, _ -> true }
+                setMediaController(MediaController(ctx))
+                requestFocus()
+                runCatching { setVideoURI(android.net.Uri.parse(url)) }
             }
         },
         modifier = Modifier.fillMaxSize()

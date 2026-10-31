@@ -20,6 +20,7 @@ class LoginViewModel(
     val uiState: StateFlow<LoginUiState> = _uiState
 
     fun login(serverUrl: String, username: String, password: String, onSuccess: () -> Unit) {
+        if (_uiState.value.isLoading) return
         if (serverUrl.isBlank() || username.isBlank() || password.isBlank()) {
             _uiState.value = _uiState.value.copy(error = "请填写完整信息")
             return

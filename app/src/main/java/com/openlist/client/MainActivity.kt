@@ -87,11 +87,12 @@ class MainActivity : ComponentActivity() {
                                     }
                                 )
                             ) { backStackEntry ->
-                                val rawPath = backStackEntry.arguments?.getString("path") ?: "/"
+                                // Navigation 匹配路由时已对 path 参数解码一次，这里不能再解一次
+                                val pathArg = backStackEntry.arguments?.getString("path") ?: "/"
                                 FileBrowserScreen(
                                     sessionManager = app.sessionManager,
                                     favoritesManager = app.favoritesManager,
-                                    initialPath = Uri.decode(rawPath),
+                                    initialPath = pathArg,
                                     onLogout = { goToServers() },
                                     onOpenPreview = { path ->
                                         navController.navigate("preview/${Uri.encode(path)}")
@@ -119,10 +120,11 @@ class MainActivity : ComponentActivity() {
                                 )
                             }
                             composable("preview/{filePath}") { backStackEntry ->
-                                val raw = backStackEntry.arguments?.getString("filePath") ?: "/"
+                                // 同上：路径参数已由 Navigation 解码，避免二次解码破坏含 % 的文件名
+                                val filePath = backStackEntry.arguments?.getString("filePath") ?: "/"
                                 FilePreviewScreen(
                                     sessionManager = app.sessionManager,
-                                    filePath = Uri.decode(raw),
+                                    filePath = filePath,
                                     onClose = { navController.popBackStack() }
                                 )
                             }

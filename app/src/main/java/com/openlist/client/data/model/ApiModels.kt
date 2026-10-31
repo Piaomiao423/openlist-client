@@ -106,6 +106,7 @@ data class SearchRequest(
     @SerializedName("keywords") val keywords: String,
     @SerializedName("scope") val scope: Int = 0,
     @SerializedName("page") val page: Int = 1,
-    @SerializedName("per_page") val perPage: Int = 0,
+    // OpenList 的搜索接口要求 per_page >= 1（0 会返回 400）
+    @SerializedName("per_page") val perPage: Int = 200,
     @SerializedName("password") val password: String = ""
 )

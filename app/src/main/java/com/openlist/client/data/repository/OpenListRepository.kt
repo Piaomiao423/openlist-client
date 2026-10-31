@@ -86,7 +86,13 @@ class OpenListRepository(
                 val body = resp.body()
                 val url = normalizeUrl(body?.data?.url)
                 if (body?.code == 200 && url != null) {
-                    candidates += DownloadInfo(encodeUrl(url), parseHeaderJson(body.data?.header))
+                    val headers = parseHeaderJson(body.data?.header)
+                    // 需要 Authorization 等请求头的直链无法交给无头播放器，统一按需认证处理
+                    candidates += DownloadInfo(
+                        encodeUrl(url),
+                        headers,
+                        requiresAuth = headers.keys.any { it.equals("Authorization", true) }
+                    )
                 }
             }
         } catch (e: CancellationException) { throw e } catch (e: UnauthorizedException) { throw e } catch (e: Exception) {
@@ -100,7 +106,12 @@ class OpenListRepository(
                 val body = resp.body()
                 val url = normalizeUrl(body?.data?.rawUrl ?: body?.data?.url)
                 if (body?.code == 200 && url != null) {
-                    candidates += DownloadInfo(encodeUrl(url), parseHeaderJson(body?.data?.header))
+                    val headers = parseHeaderJson(body.data?.header)
+                    candidates += DownloadInfo(
+                        encodeUrl(url),
+                        headers,
+                        requiresAuth = headers.keys.any { it.equals("Authorization", true) }
+                    )
                 }
             }
         } catch (e: CancellationException) { throw e } catch (e: UnauthorizedException) { throw e } catch (e: Exception) {
@@ -145,50 +156,60 @@ class OpenListRepository(
         return try {
             val candidates = downloadCandidates(path)
             if (candidates.isEmpty()) return Result.failure(Exception("无法获取下载链接"))
-        val ext = path.substringAfterLast('.', "")
-            .takeIf { it.isNotEmpty() && it.length <= 10 && it.all { c -> c.isLetterOrDigit() } }
-            ?: ""
-        val previewDir = File(cacheDir, "preview").apply { mkdirs() }
-        val client = downloadClient
-        val errors = mutableListOf<String>()
-
-        for ((index, info) in candidates.withIndex()) {
-            val cacheFile = File(
-                previewDir,
-                "preview_${System.currentTimeMillis()}_$index${if (ext.isNotEmpty()) ".$ext" else ""}"
-            )
-            try {
-                fun buildRequest(withAuth: Boolean): okhttp3.Request {
-                    val builder = okhttp3.Request.Builder().url(info.url)
-                    info.headers.forEach { (k, v) ->
-                        if (!k.equals("Authorization", true)) builder.header(k, v)
-                    }
-                    if (withAuth && token.isNotBlank()) builder.header("Authorization", authHeader())
-                    return builder.build()
+            val ext = path.substringAfterLast('.', "")
+                .takeIf { it.isNotEmpty() && it.length <= 10 && it.all { c -> c.isLetterOrDigit() } }
+                ?: ""
+            val previewDir = File(cacheDir, "preview").apply { mkdirs() }
+            // 预览缓存只用于临时播放/查看，定期清掉过期文件，避免长期占用存储
+            runCatching {
+                val cutoff = System.currentTimeMillis() - 7L * 24 * 60 * 60 * 1000
+                previewDir.listFiles()?.forEach { f ->
+                    if (f.isFile && f.lastModified() < cutoff) f.delete()
                 }
-                var response = client.newCall(buildRequest(true)).execute()
-                if (response.code == 401 || response.code == 403) {
-                    // 部分部署直链公开（签名 URL），认证头反而多余，去掉重试一次
-                    response.close()
-                    response = client.newCall(buildRequest(false)).execute()
-                }
-                response.use { resp ->
-                    if (!resp.isSuccessful) {
-                        throw Exception("HTTP ${resp.code}")
-                    }
-                    val responseBody = resp.body ?: throw Exception("响应体为空")
-                    responseBody.byteStream().use { input ->
-                        cacheFile.outputStream().use { output -> input.copyTo(output) }
-                    }
-                }
-                return Result.success(cacheFile)
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Throwable) {
-                errors += "方式${index + 1}(${info.url.take(60)}): ${e.message ?: "未知错误"}"
             }
-        }
-        Result.failure(Exception("下载失败（${candidates.size} 种方式均不可用）：${errors.joinToString(" | ")}"))
+            val client = downloadClient
+            val errors = mutableListOf<String>()
+
+            for ((index, info) in candidates.withIndex()) {
+                val cacheFile = File(
+                    previewDir,
+                    "preview_${System.currentTimeMillis()}_$index${if (ext.isNotEmpty()) ".$ext" else ""}"
+                )
+                try {
+                    fun buildRequest(withAuth: Boolean): okhttp3.Request {
+                        val builder = okhttp3.Request.Builder().url(info.url)
+                        info.headers.forEach { (k, v) ->
+                            if (!k.equals("Authorization", true)) builder.header(k, v)
+                        }
+                        if (withAuth && token.isNotBlank()) builder.header("Authorization", authHeader())
+                        return builder.build()
+                    }
+                    var response = client.newCall(buildRequest(true)).execute()
+                    if (response.code == 401 || response.code == 403) {
+                        // 部分部署直链公开（签名 URL），认证头反而多余，去掉重试一次
+                        response.close()
+                        response = client.newCall(buildRequest(false)).execute()
+                    }
+                    response.use { resp ->
+                        if (!resp.isSuccessful) {
+                            throw Exception("HTTP ${resp.code}")
+                        }
+                        val responseBody = resp.body ?: throw Exception("响应体为空")
+                        responseBody.byteStream().use { input ->
+                            cacheFile.outputStream().use { output -> input.copyTo(output) }
+                        }
+                    }
+                    return Result.success(cacheFile)
+                } catch (e: CancellationException) {
+                    cacheFile.delete()
+                    throw e
+                } catch (e: Throwable) {
+                    // 失败的半截文件必须删除，否则会残留在缓存里
+                    cacheFile.delete()
+                    errors += "方式${index + 1}(${info.url.take(60)}): ${e.message ?: "未知错误"}"
+                }
+            }
+            Result.failure(Exception("下载失败（${candidates.size} 种方式均不可用）：${errors.joinToString(" | ")}"))
         } catch (e: CancellationException) { throw e } catch (e: Exception) {
             Result.failure(e)
         }
@@ -233,18 +254,19 @@ class OpenListRepository(
                 asTask = "false",
                 body = headerBody
             )
-            when {
-                headerResp.code() == 401 -> return Result.failure(UnauthorizedException())
-                headerResp.isSuccessful -> {
-                    // 若返回异步任务（OpenList 强制任务队列），轮询直到完成
-                    val taskId = headerResp.body()?.data?.task?.id
-                    if (taskId != null) {
-                        awaitUploadTask(taskId)?.let { return Result.failure(Exception(it)) }
-                    }
-                    // 大小校验兜底：防止任务"成功"但文件写入不完整
-                    verifyUploadSize(remotePath, expected)?.let { return Result.failure(Exception(it)) }
-                    return Result.success(Unit)
+            val headerResult = headerResp.body()
+            val headerOk = headerResp.isSuccessful &&
+                (headerResult == null || headerResult.code == 200)
+            if (headerResp.code() == 401) return Result.failure(UnauthorizedException())
+            if (headerOk) {
+                // 若返回异步任务（OpenList 强制任务队列），轮询直到完成
+                val taskId = headerResult?.data?.task?.id
+                if (taskId != null) {
+                    awaitUploadTask(taskId)?.let { return Result.failure(Exception(it)) }
                 }
+                // 大小校验兜底：防止任务"成功"但文件写入不完整
+                verifyUploadSize(remotePath, expected)?.let { return Result.failure(Exception(it)) }
+                return Result.success(Unit)
             }
             // 方式二：清理可能残留的半截文件后回退 query 方式（旧版兼容）
             val dir = remotePath.substringBeforeLast('/', "/").ifEmpty { "/" }
@@ -262,10 +284,12 @@ class OpenListRepository(
                 asTask = "false",
                 body = queryBody
             )
+            val queryResult = queryResp.body()
             when {
                 queryResp.code() == 401 -> Result.failure(UnauthorizedException())
-                queryResp.isSuccessful -> {
-                    val taskId = queryResp.body()?.data?.task?.id
+                queryResp.isSuccessful &&
+                    (queryResult == null || queryResult.code == 200) -> {
+                    val taskId = queryResult?.data?.task?.id
                     if (taskId != null) {
                         awaitUploadTask(taskId)?.let { return Result.failure(Exception(it)) }
                     }
@@ -273,7 +297,10 @@ class OpenListRepository(
                     Result.success(Unit)
                 }
                 else -> Result.failure(
-                    Exception("上传失败: 头方式 HTTP ${headerResp.code()} ${headerResp.message()}；query 方式 HTTP ${queryResp.code()} ${queryResp.message()}")
+                    Exception(
+                        "上传失败：Header 方式 ${headerResult?.message ?: "HTTP ${headerResp.code()}"}；" +
+                            "Query 方式 ${queryResult?.message ?: "HTTP ${queryResp.code()}"}"
+                    )
                 )
             }
         } catch (e: CancellationException) { throw e } catch (e: Exception) {
@@ -295,7 +322,7 @@ class OpenListRepository(
                 when (state) {
                     "succeeded" -> return null
                     "failed", "canceled", "errored", "error" -> {
-                        val detail = task?.error?.takeIf { it.isNotBlank() } ?: state
+                        val detail = task.error?.takeIf { it.isNotBlank() } ?: state
                         return "上传任务失败（$detail）"
                     }
                     else -> Unit // pending/running/null：继续等
@@ -330,8 +357,12 @@ class OpenListRepository(
         val response = api.mkdir(MkdirRequest(path), authHeader())
         when {
             response.code() == 401 -> Result.failure(UnauthorizedException())
-            response.isSuccessful -> Result.success(Unit)
-            else -> Result.failure(Exception("创建目录失败"))
+            response.isSuccessful -> {
+                val body = response.body()
+                if (body == null || body.code == 200) Result.success(Unit)
+                else Result.failure(Exception(body.message ?: "创建目录失败"))
+            }
+            else -> Result.failure(Exception("创建目录失败（HTTP ${response.code()}）"))
         }
     } catch (e: CancellationException) { throw e } catch (e: Exception) {
         Result.failure(e)
@@ -341,8 +372,12 @@ class OpenListRepository(
         val response = api.remove(RemoveRequest(dir, names), authHeader())
         when {
             response.code() == 401 -> Result.failure(UnauthorizedException())
-            response.isSuccessful -> Result.success(Unit)
-            else -> Result.failure(Exception("删除失败"))
+            response.isSuccessful -> {
+                val body = response.body()
+                if (body == null || body.code == 200) Result.success(Unit)
+                else Result.failure(Exception(body.message ?: "删除失败"))
+            }
+            else -> Result.failure(Exception("删除失败（HTTP ${response.code()}）"))
         }
     } catch (e: CancellationException) { throw e } catch (e: Exception) {
         Result.failure(e)
@@ -352,8 +387,12 @@ class OpenListRepository(
         val response = api.rename(RenameRequest(path, newName), authHeader())
         when {
             response.code() == 401 -> Result.failure(UnauthorizedException())
-            response.isSuccessful -> Result.success(Unit)
-            else -> Result.failure(Exception("重命名失败"))
+            response.isSuccessful -> {
+                val body = response.body()
+                if (body == null || body.code == 200) Result.success(Unit)
+                else Result.failure(Exception(body.message ?: "重命名失败"))
+            }
+            else -> Result.failure(Exception("重命名失败（HTTP ${response.code()}）"))
         }
     } catch (e: CancellationException) { throw e } catch (e: Exception) {
         Result.failure(e)

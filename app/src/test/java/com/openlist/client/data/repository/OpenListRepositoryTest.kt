@@ -8,6 +8,7 @@ import okhttp3.mockwebserver.MockWebServer
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -189,6 +190,44 @@ class OpenListRepositoryTest {
         assertEquals("proxy-body", file.readText())
     }
 
+    @Test
+    fun `downloadToCache never sends token to a different host`() = runTest {
+        server.enqueue(
+            json("""{"code":200,"data":{"url":"http://localhost:${server.port}/d/a.txt"}}""")
+        )
+        server.enqueue(MockResponse().setResponseCode(500))
+        server.enqueue(MockResponse().setBody("remote-body"))
+
+        val file = newRepository().downloadToCache("/d/a.txt").getOrThrow()
+
+        assertEquals("remote-body", file.readText())
+        val link = server.takeRequest()
+        server.takeRequest()
+        val direct = server.takeRequest()
+        assertEquals("token-1", link.getHeader("Authorization"))
+        assertNull(direct.getHeader("Authorization"))
+    }
+
+    @Test
+    fun `downloadToCache keeps provider headers from direct link`() = runTest {
+        server.enqueue(
+            json(
+                """{"code":200,"data":{"url":"http://localhost:${server.port}/d/a.txt",
+                  "header":"{\"Authorization\":\"provider-token\",\"Referer\":\"https://pan.example\"}"}}"""
+            )
+        )
+        server.enqueue(MockResponse().setResponseCode(500))
+        server.enqueue(MockResponse().setBody("remote-body"))
+
+        newRepository().downloadToCache("/d/a.txt").getOrThrow()
+
+        server.takeRequest()
+        server.takeRequest()
+        val direct = server.takeRequest()
+        assertEquals("provider-token", direct.getHeader("Authorization"))
+        assertEquals("https://pan.example", direct.getHeader("Referer"))
+    }
+
     // ===== 上传 =====
 
     private fun localUploadFile(): File =
@@ -226,6 +265,25 @@ class OpenListRepositoryTest {
         val error = newRepository().uploadFile(localUploadFile(), "/docs").exceptionOrNull()
 
         assertTrue(error?.message?.contains("上传不完整") == true)
+    }
+
+    @Test
+    fun `uploadFile query fallback keeps path encoded once`() = runTest {
+        val local = File(cacheDir, "中文 文件.txt").apply { writeText("hello") }
+        server.enqueue(MockResponse().setResponseCode(500))
+        server.enqueue(json("""{"code":200,"data":null}"""))
+        server.enqueue(json("""{"code":200,"data":{"task":null}}"""))
+        server.enqueue(json("""{"code":200,"data":{"size":5}}"""))
+
+        val result = newRepository().uploadFile(local, "/docs")
+
+        assertTrue(result.isSuccess)
+        server.takeRequest()
+        server.takeRequest()
+        val queryPut = server.takeRequest()
+        val encoded = "%E4%B8%AD%E6%96%87%20%E6%96%87%E4%BB%B6.txt"
+        assertTrue(queryPut.path!!.contains(encoded))
+        assertFalse(queryPut.path!!.contains("%25E4"))
     }
 
     // ===== 目录与删除 =====

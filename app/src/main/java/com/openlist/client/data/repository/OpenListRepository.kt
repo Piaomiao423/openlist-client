@@ -4,13 +4,14 @@ import com.openlist.client.data.model.*
 import com.openlist.client.data.remote.ApiClient
 import com.openlist.client.data.remote.OpenListApi
 import com.openlist.client.util.UrlCodec
+import com.google.gson.JsonParser
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.RequestBody
 import okhttp3.RequestBody.Companion.asRequestBody
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
-import org.json.JSONObject
 import java.io.File
 
 /** 表示 Token 失效，UI 层应引导用户重新登录 */
@@ -33,6 +34,9 @@ class OpenListRepository(
 ) {
 
     private fun authHeader(): String = token
+
+    /** 服务器主机名：只在同源请求上附带登录 Token，避免把凭据发给第三方直链域名 */
+    private val serverHost: String? = serverUrl.toHttpUrlOrNull()?.host
 
     /** OpenList 的 raw_url 是相对路径，需要拼接服务器地址 */
     private fun normalizeUrl(raw: String?): String? {
@@ -58,11 +62,16 @@ class OpenListRepository(
     private fun parseHeaderJson(raw: String?): Map<String, String> {
         if (raw.isNullOrBlank()) return emptyMap()
         return try {
-            val obj = JSONObject(raw)
+            val obj = JsonParser().parse(raw).asJsonObject
             val result = HashMap<String, String>()
-            obj.keys().forEach { k ->
-                val v = obj.optString(k)
-                if (v.isNotBlank()) result[k] = v
+            for (key in obj.keySet()) {
+                val element = obj.get(key)
+                val value = when {
+                    element == null -> ""
+                    element.isJsonPrimitive -> element.asString
+                    else -> element.toString()
+                }
+                if (value.isNotBlank()) result[key] = value
             }
             result
         } catch (e: CancellationException) { throw e } catch (e: Exception) {
@@ -178,10 +187,13 @@ class OpenListRepository(
                 try {
                     fun buildRequest(withAuth: Boolean): okhttp3.Request {
                         val builder = okhttp3.Request.Builder().url(info.url)
-                        info.headers.forEach { (k, v) ->
-                            if (!k.equals("Authorization", true)) builder.header(k, v)
+                        // 服务器返回的请求头是直链自身的凭据（如网盘 User-Agent/Referer/Authorization）
+                        info.headers.forEach { (k, v) -> builder.header(k, v) }
+                        val hasOwnAuth = info.headers.keys.any { it.equals("Authorization", true) }
+                        val sameHost = info.url.toHttpUrlOrNull()?.host == serverHost
+                        if (withAuth && !hasOwnAuth && sameHost && token.isNotBlank()) {
+                            builder.header("Authorization", authHeader())
                         }
-                        if (withAuth && token.isNotBlank()) builder.header("Authorization", authHeader())
                         return builder.build()
                     }
                     var response = client.newCall(buildRequest(true)).execute()

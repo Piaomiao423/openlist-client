@@ -123,8 +123,10 @@ fun FilePreviewScreen(
             info.fold(
                 onSuccess = { downloadInfo ->
                     // 需认证的直链（/p/ 代理路由）无法被播放器流式加载，走下载缓存；
+                    // 直链要求自定义请求头（网盘 User-Agent/Referer 等）时播放器同样无法携带，也走下载；
                     // 公网 HTTP 直链会被媒体组件绕过 OkHttp，因此这里同样按明文策略拦截。
                     val streamAllowed = streamable && !downloadInfo.requiresAuth &&
+                        downloadInfo.headers.isEmpty() &&
                         downloadInfo.url.startsWith(serverUrl) &&
                         CleartextGuard.isAllowed(downloadInfo.url)
                     if (streamAllowed) {

@@ -67,10 +67,10 @@ interface OpenListApi {
         @Body body: RequestBody
     ): Response<ApiResponse<UploadData>>
 
-    /** 上传（旧版兼容：目标路径通过 query 传递） */
+    /** 上传（旧版兼容：目标路径通过 query 传递；path 已手工编码，禁止 Retrofit 二次编码） */
     @PUT("/api/fs/put")
     suspend fun uploadFileWithQuery(
-        @Query("path") path: String,
+        @Query("path", encoded = true) path: String,
         @Header("Authorization") token: String,
         @Header("As-Task") asTask: String = "false",
         @Header("Content-Type") contentType: String = "application/octet-stream",

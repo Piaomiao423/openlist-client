@@ -10,7 +10,9 @@ private val TEXT_EXTS = setOf(
     "kt", "kts", "java", "py", "c", "cpp", "cc", "h", "hpp", "js", "mjs", "cjs",
     "ts", "tsx", "jsx", "html", "htm", "css", "scss", "less", "yml", "yaml", "toml",
     "sql", "gradle", "go", "rs", "rb", "php", "swift", "scala", "lua", "r", "dart",
-    "vue", "sass", "pl", "pm", "sh", "fish", "Makefile", "cmake", "graphql", "proto"
+    "vue", "sass", "pl", "pm", "sh", "fish", "Makefile", "cmake", "graphql", "proto",
+    // 歌词/字幕/说明文件，常见于音乐与影视目录
+    "lrc", "srt", "ass", "ssa", "vtt", "nfo", "sub"
 ).map { it.lowercase() }.toSet()
 
 /** PDF */

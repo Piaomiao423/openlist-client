@@ -64,7 +64,13 @@ class FileListViewModel(
                 onFailure = { e ->
                     val msg = if (e is UnauthorizedException) "登录已过期，请重新登录"
                     else e.message ?: "加载失败"
-                    _uiState.value = _uiState.value.copy(isLoading = false, error = msg)
+                    // 失败时也记录目标路径：标题显示正确目录，且返回按钮可用
+                    _uiState.value = _uiState.value.copy(
+                        currentPath = path,
+                        items = emptyList(),
+                        isLoading = false,
+                        error = msg
+                    )
                 }
             )
         }

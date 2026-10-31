@@ -94,7 +94,7 @@ internal fun ArchivePreview(file: File) {
                         fontFamily = FontFamily.Monospace,
                         fontSize = 13.sp
                     )
-                    if (!name.endsWith("/")) {
+                    if (!name.endsWith("/") && size >= 0) {
                         Text(
                             formatSize(size),
                             color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),

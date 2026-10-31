@@ -137,39 +137,37 @@ internal fun AudioPreview(file: File) {
         verticalArrangement = Arrangement.Center
     ) {
         val message = error
-        if (message != null) {
-            Text(
+        when {
+            message != null -> Text(
                 message,
                 color = MaterialTheme.colorScheme.error,
                 style = MaterialTheme.typography.bodyMedium
             )
-            return@Column
+            !ready -> CircularProgressIndicator()
+            else -> {
+                val displayPosition = if (seeking) seekTarget else position
+                val max = duration.coerceAtLeast(1L)
+                AudioControls(
+                    playing = playing,
+                    position = displayPosition,
+                    duration = duration,
+                    enabled = duration > 0L,
+                    onSeekStart = { value ->
+                        seeking = true
+                        seekTarget = value
+                    },
+                    onSeekFinished = {
+                        val target = seekTarget.coerceIn(0L, duration)
+                        position = target
+                        seeking = false
+                        completed = false
+                        runCatching { player.seekTo(target.toInt()) }
+                    },
+                    onToggle = { toggle() },
+                    sliderMax = max
+                )
+            }
         }
-        if (!ready) {
-            CircularProgressIndicator()
-            return@Column
-        }
-        val displayPosition = if (seeking) seekTarget else position
-        val max = duration.coerceAtLeast(1L)
-        AudioControls(
-            playing = playing,
-            position = displayPosition,
-            duration = duration,
-            enabled = duration > 0L,
-            onSeekStart = { value ->
-                seeking = true
-                seekTarget = value
-            },
-            onSeekFinished = {
-                val target = seekTarget.coerceIn(0L, duration)
-                position = target
-                seeking = false
-                completed = false
-                runCatching { player.seekTo(target.toInt()) }
-            },
-            onToggle = { toggle() },
-            sliderMax = max
-        )
     }
 }
 

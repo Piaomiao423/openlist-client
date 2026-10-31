@@ -21,7 +21,6 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.InsertDriveFile
-import androidx.compose.material.icons.automirrored.filled.Logout
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -60,7 +59,8 @@ fun FileBrowserScreen(
     initialPath: String = "/",
     onLogout: () -> Unit,
     onOpenPreview: (path: String) -> Unit,
-    onOpenFavorites: () -> Unit
+    onOpenFavorites: () -> Unit,
+    onOpenServers: () -> Unit
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -98,7 +98,10 @@ fun FileBrowserScreen(
     )
 
     val state by viewModel.uiState.collectAsState()
-    val favorites by favoritesManager.favorites.collectAsState(initial = emptySet())
+    // 旧版收藏未区分服务器，登录后迁移一次
+    LaunchedEffect(serverUrl) { favoritesManager.migrateLegacy(serverUrl) }
+    val favoritesFlow = remember(serverUrl) { favoritesManager.favorites(serverUrl) }
+    val favorites by favoritesFlow.collectAsState(initial = emptySet())
 
     // 目录列表滚动状态；配合 ViewModel 的 scrollMemory 实现"返回上级回到上次位置"
     val listState = rememberLazyListState()
@@ -238,13 +241,8 @@ fun FileBrowserScreen(
                     IconButton(onClick = { showAbout = true }) {
                         Icon(Icons.Default.Info, contentDescription = "关于")
                     }
-                    IconButton(onClick = {
-                        scope.launch {
-                            sessionManager.logout()
-                            onLogout()
-                        }
-                    }) {
-                        Icon(Icons.AutoMirrored.Filled.Logout, contentDescription = "断开连接")
+                    IconButton(onClick = onOpenServers) {
+                        Icon(Icons.Default.Dns, contentDescription = "服务器列表")
                     }
                 }
             )
@@ -411,7 +409,7 @@ fun FileBrowserScreen(
                                 onMenuFavorite = {
                                     menuItem = null
                                     scope.launch {
-                                        favoritesManager.toggle(fullPath(item))
+                                        favoritesManager.toggle(serverUrl, fullPath(item))
                                     }
                                 }
                             )

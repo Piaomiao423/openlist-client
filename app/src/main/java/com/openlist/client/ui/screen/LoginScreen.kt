@@ -9,20 +9,17 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.AccountCircle
-import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedCard
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
@@ -37,7 +34,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
@@ -49,7 +45,8 @@ import com.openlist.client.util.SessionManager
 @Composable
 fun LoginScreen(
     sessionManager: SessionManager,
-    onLoginSuccess: () -> Unit
+    onLoginSuccess: () -> Unit,
+    onBack: () -> Unit
 ) {
     val viewModel: LoginViewModel = viewModel(
         factory = object : ViewModelProvider.Factory {
@@ -59,7 +56,6 @@ fun LoginScreen(
         }
     )
     val state by viewModel.uiState.collectAsState()
-    val accounts by viewModel.accounts.collectAsState()
 
     var serverUrl by rememberSaveable { mutableStateOf("") }
     var username by rememberSaveable { mutableStateOf("") }
@@ -84,14 +80,19 @@ fun LoginScreen(
             .padding(dims.screenPadding),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        Spacer(Modifier.height(dims.logoSpacing))
+        Row(Modifier.fillMaxWidth()) {
+            IconButton(onClick = onBack) {
+                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
+            }
+        }
+        Spacer(Modifier.height(dims.spacingLarge))
         Text(
-            "OpenList",
+            "添加服务器",
             style = MaterialTheme.typography.headlineMedium.copy(fontSize = dims.titleSize)
         )
         Spacer(Modifier.height(dims.spacingMedium))
         Text(
-            "连接你的 OpenList 网盘",
+            "登录后可在服务器列表间切换",
             style = MaterialTheme.typography.bodyMedium.copy(fontSize = dims.subtitleSize)
         )
         Spacer(Modifier.height(dims.spacingLarge))
@@ -179,60 +180,6 @@ fun LoginScreen(
                 )
             } else {
                 Text("连接", style = MaterialTheme.typography.bodyLarge.copy(fontSize = dims.bodySize))
-            }
-        }
-
-        // ===== 多账户：已保存账户快速切换 =====
-        if (accounts.isNotEmpty()) {
-            Spacer(Modifier.height(dims.spacingLarge))
-            Text(
-                "已保存账户（点击切换）",
-                style = MaterialTheme.typography.bodyMedium.copy(fontSize = dims.smallSize),
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            Spacer(Modifier.height(dims.spacingMedium))
-            accounts.forEach { account ->
-                OutlinedCard(
-                    onClick = { viewModel.switchAccount(account, onLoginSuccess) },
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Row(
-                        Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 12.dp, vertical = 8.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Icon(
-                            Icons.Default.AccountCircle,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.primary
-                        )
-                        Spacer(Modifier.width(8.dp))
-                        Column(Modifier.weight(1f)) {
-                            Text(
-                                account.username,
-                                style = MaterialTheme.typography.bodyLarge.copy(fontSize = dims.bodySize),
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                            Text(
-                                account.serverUrl,
-                                style = MaterialTheme.typography.labelSmall.copy(fontSize = dims.smallSize),
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                        }
-                        IconButton(onClick = { viewModel.removeAccount(account) }) {
-                            Icon(
-                                Icons.Default.Delete,
-                                contentDescription = "删除账户",
-                                tint = MaterialTheme.colorScheme.error
-                            )
-                        }
-                    }
-                }
-                Spacer(Modifier.height(4.dp))
             }
         }
     }

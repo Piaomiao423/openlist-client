@@ -45,9 +45,7 @@ data class AdaptiveDimens(
     /** 列表行最小高度 */
     val listRowMinHeight: Dp,
     /** 顶部栏标题字号 */
-    val topBarTitleSize: TextUnit,
-    /** 登录页 Logo 区留白 */
-    val logoSpacing: Dp
+    val topBarTitleSize: TextUnit
 ) {
     companion object {
         /** 标准档：手机/平板 */
@@ -64,8 +62,7 @@ data class AdaptiveDimens(
             buttonHeight = 48.dp,
             iconSize = 24.dp,
             listRowMinHeight = 56.dp,
-            topBarTitleSize = 22.sp,
-            logoSpacing = 64.dp
+            topBarTitleSize = 22.sp
         )
 
         /** 紧凑档：Wear OS 手表等小屏 */
@@ -82,8 +79,7 @@ data class AdaptiveDimens(
             buttonHeight = 44.dp,
             iconSize = 20.dp,
             listRowMinHeight = 44.dp,
-            topBarTitleSize = 16.sp,
-            logoSpacing = 28.dp
+            topBarTitleSize = 16.sp
         )
     }
 }

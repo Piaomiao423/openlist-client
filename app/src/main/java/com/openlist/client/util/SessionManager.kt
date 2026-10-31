@@ -37,12 +37,15 @@ class SessionManager(private val context: Context) {
         private val KEY_ACTIVE = stringPreferencesKey("active")
     }
 
-    /** true = 已有活跃账户（已登录） */
-    val authState: Flow<Boolean?> = context.dataStore.data
+    /** 当前活跃账户（含服务器、用户名、Token），未登录时为 null */
+    val activeAccountFlow: Flow<Account?> = context.dataStore.data
         .map { prefs ->
-            val activeId = prefs[KEY_ACTIVE]
-            activeId != null && decode(prefs[KEY_ACCOUNTS]).any { it.id == activeId }
+            val activeId = prefs[KEY_ACTIVE] ?: return@map null
+            decode(prefs[KEY_ACCOUNTS]).firstOrNull { it.id == activeId }
         }
+
+    /** true = 已有活跃账户（已登录） */
+    val authState: Flow<Boolean?> = activeAccountFlow.map { it != null }
 
     /** 已保存账户列表 */
     val accountsFlow: Flow<List<Account>> = context.dataStore.data
@@ -100,32 +103,23 @@ class SessionManager(private val context: Context) {
         return true
     }
 
-    /** 删除已保存账户；若删除的是当前账户，自动切换到剩余第一个或登出 */
+    /** 删除已保存账户；若删除的是当前账户则退出登录，回到服务器列表重新选择 */
     suspend fun removeAccount(serverUrl: String, username: String) {
         val targetId = "$serverUrl|$username"
         context.dataStore.edit { prefs ->
             val list = decode(prefs[KEY_ACCOUNTS]).filterNot { it.id == targetId }
             prefs[KEY_ACCOUNTS] = encode(list)
             if (prefs[KEY_ACTIVE] == targetId) {
-                val next = list.firstOrNull()?.id
-                if (next != null) prefs[KEY_ACTIVE] = next else prefs.remove(KEY_ACTIVE)
+                prefs.remove(KEY_ACTIVE)
             }
         }
         ApiClient.reset()
     }
 
-    /** 退出当前账户：清除当前 Token 并登出；保留其他账户可快速切换 */
+    /** 退出当前账户：清除其 Token 并登出，保留其他账户供服务器列表切换 */
     suspend fun logout() {
-        val active = getActiveAccount()
-        if (active != null) {
-            removeAccount(active.serverUrl, active.username)
-        } else {
-            context.dataStore.edit { prefs ->
-                prefs.remove(KEY_ACTIVE)
-                prefs[KEY_ACCOUNTS] = encode(emptyList())
-            }
-        }
-        ApiClient.reset()
+        val active = getActiveAccount() ?: return
+        removeAccount(active.serverUrl, active.username)
     }
 
     // ===== JSON 编解码 =====

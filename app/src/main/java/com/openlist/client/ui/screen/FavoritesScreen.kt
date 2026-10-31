@@ -26,10 +26,12 @@ import kotlinx.coroutines.launch
 @Composable
 fun FavoritesScreen(
     favoritesManager: FavoritesManager,
+    serverUrl: String,
     onBack: () -> Unit,
     onOpenFile: (path: String) -> Unit
 ) {
-    val favorites by favoritesManager.favorites.collectAsState(initial = emptySet())
+    val favoritesFlow = remember(serverUrl) { favoritesManager.favorites(serverUrl) }
+    val favorites by favoritesFlow.collectAsState(initial = emptySet())
     val scope = rememberCoroutineScope()
     val dims = rememberAdaptiveDimens()
 
@@ -99,7 +101,7 @@ fun FavoritesScreen(
                         },
                         trailingContent = {
                             IconButton(onClick = {
-                                scope.launch { favoritesManager.remove(path) }
+                                scope.launch { favoritesManager.remove(serverUrl, path) }
                             }) {
                                 Icon(
                                     Icons.Default.Star,

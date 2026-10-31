@@ -14,7 +14,8 @@
   - 文本 / 代码：20+ 语言语法高亮，自动识别 UTF-8 / UTF-16 / GBK 编码
   - 压缩包：zip / jar / apk 内部文件列表
 - **文件操作**：上传（同步 + 任务轮询 + 服务器端大小校验，杜绝假成功）、下载到系统存储、新建文件夹、重命名、删除、查看属性
-- **会话**：DataStore 持久化登录状态，Token 过期自动退回登录页
+- **多服务器**：未登录时启动即进入服务器列表，支持添加服务器；点已保存服务器即可切换（复用 Token，无需重新登录），也可删除服务器
+- **会话**：DataStore 持久化登录状态，Token 过期自动退回登录页；退出当前服务器不影响其他已保存服务器
 
 ## 技术栈
 
@@ -36,11 +37,43 @@
 
 APK 输出：`app/build/outputs/apk/debug/app-debug.apk`。
 
+### Release 签名
+
+`app/build.gradle.kts` 会读取根目录的 `keystore.properties`（已在 `.gitignore` 中，不随仓库分发）：
+
+```properties
+storeFile=keystore/openlist-release.keystore
+storePassword=<你的口令>
+keyAlias=openlist
+keyPassword=<你的口令>
+```
+
+缺少该文件时 release 仍可编译，但产物未签名（`app-release-unsigned.apk`），仅供本地验证。
+
+生成新密钥库：
+
+```bash
+keytool -genkeypair -keystore keystore/openlist-release.keystore -storetype PKCS12 \
+  -alias openlist -keyalg RSA -keysize 2048 -validity 10000
+```
+
+构建与校验：
+
+```bash
+./gradlew assembleRelease
+apksigner verify --print-certs app/build/outputs/apk/release/app-release.apk
+```
+
+> `keystore/` 与 `keystore.properties` 必须妥善备份：密钥库丢失后将无法发布可覆盖安装的更新；泄露则他人可伪造更新包。
+
 ## 使用
 
 1. 部署好 OpenList 服务（默认监听 5244 端口）
-2. 打开 App，输入服务器地址（如 `http://192.168.1.100:5244`）、用户名、密码
-3. 登录后即可浏览和操作文件
+2. 打开 App 先进入服务器列表，点「添加服务器」，输入服务器地址（如 `http://192.168.1.100:5244`）、用户名、密码
+3. 登录后即可浏览和操作文件；下次启动会直接进入上次使用的服务器
+4. 需要访问其他服务器时，点浏览页右上角的服务器图标进入服务器列表，点任一已保存服务器即可切换，无需重新登录
+
+收藏夹按服务器隔离，切换服务器后只显示当前服务器的收藏。
 
 ### 明文传输策略
 

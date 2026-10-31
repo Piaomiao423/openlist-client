@@ -21,6 +21,7 @@ import androidx.navigation.navArgument
 import com.openlist.client.ui.screen.FileBrowserScreen
 import com.openlist.client.ui.screen.FavoritesScreen
 import com.openlist.client.ui.screen.LoginScreen
+import com.openlist.client.ui.screen.ServersScreen
 import com.openlist.client.ui.screen.preview.FilePreviewScreen
 import com.openlist.client.ui.theme.OpenListTheme
 
@@ -31,6 +32,7 @@ class MainActivity : ComponentActivity() {
         setContent {
             OpenListTheme {
                 val authState by app.sessionManager.authState.collectAsState(initial = null)
+                val activeAccount by app.sessionManager.activeAccountFlow.collectAsState(initial = null)
                 when (authState) {
                     null -> {
                         // 正在读取本地会话
@@ -40,18 +42,31 @@ class MainActivity : ComponentActivity() {
                     }
                     else -> {
                         val navController = rememberNavController()
-                        val start = if (authState == true) "browser" else "login"
+                        val start = if (authState == true) "browser" else "servers"
                         val currentEntry by navController.currentBackStackEntryAsState()
                         val currentRoute = currentEntry?.destination?.route
 
-                        // 会话失效（Token 过期/账户被删除）时，无论当前在哪个页面都回到登录页，
-                        // 避免停留在无法加载数据的界面上。
+                        fun goToServers() {
+                            navController.navigate("servers") {
+                                popUpTo(0) { inclusive = true }
+                                launchSingleTop = true
+                            }
+                        }
+
+                        fun goToBrowser() {
+                            navController.navigate("browser") {
+                                popUpTo(0) { inclusive = true }
+                                launchSingleTop = true
+                            }
+                        }
+
+                        // 会话失效（Token 过期/账户被删除）时回到服务器列表，
+                        // 登录页仅作为“添加服务器”表单存在。
                         LaunchedEffect(authState, currentRoute) {
-                            if (authState == false && currentRoute != null && currentRoute != "login") {
-                                navController.navigate("login") {
-                                    popUpTo(0) { inclusive = true }
-                                    launchSingleTop = true
-                                }
+                            if (authState == false && currentRoute != null &&
+                                currentRoute != "servers" && currentRoute != "login"
+                            ) {
+                                goToServers()
                             }
                         }
 
@@ -59,11 +74,8 @@ class MainActivity : ComponentActivity() {
                             composable("login") {
                                 LoginScreen(
                                     sessionManager = app.sessionManager,
-                                    onLoginSuccess = {
-                                        navController.navigate("browser") {
-                                            popUpTo("login") { inclusive = true }
-                                        }
-                                    }
+                                    onLoginSuccess = { goToBrowser() },
+                                    onBack = { navController.popBackStack() }
                                 )
                             }
                             composable(
@@ -80,17 +92,30 @@ class MainActivity : ComponentActivity() {
                                     sessionManager = app.sessionManager,
                                     favoritesManager = app.favoritesManager,
                                     initialPath = Uri.decode(rawPath),
-                                    onLogout = {
-                                        navController.navigate("login") {
-                                            popUpTo("browser") { inclusive = true }
-                                        }
-                                    },
+                                    onLogout = { goToServers() },
                                     onOpenPreview = { path ->
                                         navController.navigate("preview/${Uri.encode(path)}")
                                     },
                                     onOpenFavorites = {
                                         navController.navigate("favorites")
+                                    },
+                                    onOpenServers = {
+                                        navController.navigate("servers")
                                     }
+                                )
+                            }
+                            composable("servers") {
+                                ServersScreen(
+                                    sessionManager = app.sessionManager,
+                                    // 未登录时服务器列表是启动页，不显示返回
+                                    onBack = if (authState == true) {
+                                        { navController.popBackStack() }
+                                    } else {
+                                        null
+                                    },
+                                    onSwitched = { goToBrowser() },
+                                    onAddServer = { navController.navigate("login") },
+                                    onLoggedOut = { goToServers() }
                                 )
                             }
                             composable("preview/{filePath}") { backStackEntry ->
@@ -104,6 +129,7 @@ class MainActivity : ComponentActivity() {
                             composable("favorites") {
                                 FavoritesScreen(
                                     favoritesManager = app.favoritesManager,
+                                    serverUrl = activeAccount?.serverUrl ?: "",
                                     onBack = { navController.popBackStack() },
                                     onOpenFile = { path ->
                                         navController.navigate("preview/${Uri.encode(path)}")

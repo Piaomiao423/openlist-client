@@ -3,6 +3,7 @@ package com.openlist.client.data.repository
 import com.openlist.client.data.model.*
 import com.openlist.client.data.remote.ApiClient
 import com.openlist.client.data.remote.OpenListApi
+import com.openlist.client.data.remote.ProgressRequestBody
 import com.openlist.client.util.UrlCodec
 import com.google.gson.JsonParser
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
@@ -251,15 +252,24 @@ class OpenListRepository(
      * 2. 若返回异步任务（OpenList 强制任务队列），轮询 /api/task/upload/info 直到结束
      * 3. 上传完成后用 fs/get 校验服务器端文件大小，不一致则判定上传不完整
      */
-    suspend fun uploadFile(localFile: File, targetDir: String): Result<Unit> {
+    suspend fun uploadFile(
+        localFile: File,
+        targetDir: String,
+        onProgress: ((uploaded: Long, total: Long) -> Unit)? = null
+    ): Result<Unit> {
         return try {
             val remotePath = if (targetDir == "/") "/${localFile.name}" else "$targetDir/${localFile.name}"
             val encodedPath = encodeFilePath(remotePath)
             val expected = localFile.length()
 
-            // 方式一：File-Path 请求头（标准）
-            val headerBody: RequestBody =
+            fun newBody(): RequestBody = if (onProgress != null) {
+                ProgressRequestBody(localFile, onProgress)
+            } else {
                 localFile.asRequestBody("application/octet-stream".toMediaType())
+            }
+
+            // 方式一：File-Path 请求头（标准）
+            val headerBody: RequestBody = newBody()
             val headerResp = api.uploadFile(
                 filePath = encodedPath,
                 token = authHeader(),
@@ -288,8 +298,7 @@ class OpenListRepository(
             } catch (e: CancellationException) { throw e } catch (e: Exception) {
                 // 清理失败不阻塞，直接重传覆盖
             }
-            val queryBody: RequestBody =
-                localFile.asRequestBody("application/octet-stream".toMediaType())
+            val queryBody: RequestBody = newBody()
             val queryResp = api.uploadFileWithQuery(
                 path = encodedPath,
                 token = authHeader(),

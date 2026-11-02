@@ -5,11 +5,12 @@ import androidx.lifecycle.viewModelScope
 import com.openlist.client.data.model.FileItem
 import com.openlist.client.data.repository.OpenListRepository
 import com.openlist.client.data.repository.UnauthorizedException
+import com.openlist.client.util.TreeExporter
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
-import java.io.File
 
 data class FileListUiState(
     val currentPath: String = "/",
@@ -18,6 +19,19 @@ data class FileListUiState(
     val error: String? = null,
     val searchMode: Boolean = false,
     val searchKeyword: String = ""
+)
+
+data class TreeExportState(
+    val visible: Boolean = false,
+    val running: Boolean = false,
+    val rootPath: String = "/",
+    val directories: Int = 0,
+    val files: Int = 0,
+    val currentPath: String = "",
+    val text: String? = null,
+    val truncated: Boolean = false,
+    val failedDirectories: Int = 0,
+    val error: String? = null
 )
 
 class FileListViewModel(
@@ -167,14 +181,67 @@ class FileListViewModel(
         }
     }
 
-    fun uploadFile(localFile: File, onDone: (Boolean, String?) -> Unit) {
-        val dir = _uiState.value.currentPath
-        viewModelScope.launch {
-            repository.uploadFile(localFile, dir).fold(
-                onSuccess = { onDone(true, null); refresh() },
-                onFailure = { e -> onDone(false, e.message ?: "上传失败") }
+    // ===== 目录树导出 =====
+
+    private val _treeState = MutableStateFlow(TreeExportState())
+    val treeState: StateFlow<TreeExportState> = _treeState
+    private var treeJob: Job? = null
+
+    /** 递归列出 rootPath 下的全部文件并生成 tree 风格文本 */
+    fun exportTree(rootPath: String = _uiState.value.currentPath) {
+        treeJob?.cancel()
+        _treeState.value = TreeExportState(
+            visible = true,
+            running = true,
+            rootPath = rootPath,
+            currentPath = rootPath
+        )
+        treeJob = viewModelScope.launch {
+            var lastProgress = 0L
+            val exporter = TreeExporter(
+                lister = { path -> repository.listFiles(path) },
+                onProgress = { dirs, fileCount, path ->
+                    // 目录多时回调频繁，限制状态刷新频率
+                    val now = System.currentTimeMillis()
+                    if (now - lastProgress >= 250) {
+                        lastProgress = now
+                        _treeState.update {
+                            it.copy(
+                                directories = dirs,
+                                files = fileCount,
+                                currentPath = path
+                            )
+                        }
+                    }
+                }
+            )
+            exporter.export(rootPath).fold(
+                onSuccess = { result ->
+                    _treeState.value = TreeExportState(
+                        visible = true,
+                        running = false,
+                        rootPath = rootPath,
+                        directories = result.directories,
+                        files = result.files,
+                        currentPath = rootPath,
+                        text = result.text,
+                        truncated = result.truncated,
+                        failedDirectories = result.failedDirectories
+                    )
+                },
+                onFailure = { e ->
+                    val msg = if (e is UnauthorizedException) "登录已过期，请重新登录"
+                    else e.message ?: "导出失败"
+                    _treeState.value = _treeState.value.copy(running = false, error = msg)
+                }
             )
         }
+    }
+
+    fun dismissTreeExport() {
+        treeJob?.cancel()
+        treeJob = null
+        _treeState.value = TreeExportState()
     }
 
     // ===== 工具 =====

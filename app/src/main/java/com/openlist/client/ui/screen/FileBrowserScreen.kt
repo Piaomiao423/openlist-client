@@ -3,9 +3,7 @@ package com.openlist.client.ui.screen
 import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
-import android.net.Uri
 import android.os.Build
-import android.provider.OpenableColumns
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -46,18 +44,20 @@ import com.openlist.client.ui.viewmodel.FileListViewModel
 import com.openlist.client.util.Downloader
 import com.openlist.client.util.FavoritesManager
 import com.openlist.client.util.SessionManager
+import com.openlist.client.util.UploadManager
+import com.openlist.client.util.UploadStatus
 import com.openlist.client.util.isPreviewableFile
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.io.File
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun FileBrowserScreen(
     sessionManager: SessionManager,
     favoritesManager: FavoritesManager,
+    uploadManager: UploadManager,
     initialPath: String = "/",
     onLogout: () -> Unit,
     onOpenPreview: (path: String) -> Unit,
@@ -100,6 +100,7 @@ fun FileBrowserScreen(
     )
 
     val state by viewModel.uiState.collectAsState()
+    val treeState by viewModel.treeState.collectAsState()
     // 旧版收藏未区分服务器，登录后迁移一次
     LaunchedEffect(serverUrl) { favoritesManager.migrateLegacy(serverUrl) }
     val favoritesFlow = remember(serverUrl) { favoritesManager.favorites(serverUrl) }
@@ -128,30 +129,26 @@ fun FileBrowserScreen(
     var menuItem by remember { mutableStateOf<FileItem?>(null) }
     var showFabMenu by remember { mutableStateOf(false) }
 
-    var uploading by remember { mutableStateOf(false) }
+    // 上传任务由应用级 UploadManager 维护：多选文件依次上传，离开页面后仍继续
+    val allUploadTasks by uploadManager.tasks.collectAsState()
+    val uploadTasks = remember(allUploadTasks, serverUrl) {
+        allUploadTasks.filter { it.serverUrl == serverUrl }
+    }
+    val hasActiveUpload = uploadTasks.any { it.isActive }
+    // 上传完成后自动刷新当前目录；清除任务后计数归零，避免下次误判
+    var successSeen by remember(serverUrl) { mutableIntStateOf(0) }
+    LaunchedEffect(uploadTasks.map { it.id to it.status }) {
+        val successCount = uploadTasks.count { it.status == UploadStatus.SUCCESS }
+        if (successCount > successSeen) viewModel.refresh()
+        successSeen = successCount
+    }
+
     val uploadLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.GetContent()
-    ) { uri ->
-        if (uri != null) {
-            scope.launch {
-                uploading = true
-                // 复制到 IO 线程，大文件也不卡界面
-                val file = withContext(Dispatchers.IO) { copyUriToCache(context, uri) }
-                if (file != null) {
-                    viewModel.uploadFile(file) { ok, msg ->
-                        uploading = false
-                        file.delete()
-                        Toast.makeText(
-                            context,
-                            if (ok) "上传成功" else (msg ?: "上传失败"),
-                            Toast.LENGTH_SHORT
-                        ).show()
-                    }
-                } else {
-                    uploading = false
-                    Toast.makeText(context, "无法读取所选文件", Toast.LENGTH_SHORT).show()
-                }
-            }
+        ActivityResultContracts.GetMultipleContents()
+    ) { uris ->
+        if (uris.isNotEmpty()) {
+            uploadManager.enqueue(repository, serverUrl, uris, state.currentPath)
+            Toast.makeText(context, "已添加 ${uris.size} 个上传任务", Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -264,7 +261,7 @@ fun FileBrowserScreen(
             Box {
                 FloatingActionButton(onClick = { showFabMenu = true }) {
                     Icon(
-                        if (uploading) Icons.Default.HourglassEmpty else Icons.Default.Add,
+                        if (hasActiveUpload) Icons.Default.HourglassEmpty else Icons.Default.Add,
                         contentDescription = "更多操作"
                     )
                 }
@@ -281,6 +278,13 @@ fun FileBrowserScreen(
                         onClick = {
                             showFabMenu = false
                             showNewFolderDialog = true
+                        }
+                    )
+                    DropdownMenuItem(
+                        text = { Text("导出目录树") },
+                        onClick = {
+                            showFabMenu = false
+                            viewModel.exportTree()
                         }
                     )
                 }
@@ -315,6 +319,13 @@ fun FileBrowserScreen(
                         Icon(Icons.Default.Search, contentDescription = "执行搜索")
                     }
                 }
+            }
+
+            if (uploadTasks.isNotEmpty()) {
+                UploadPanel(
+                    tasks = uploadTasks,
+                    onClearFinished = { uploadManager.clearFinished(serverUrl) }
+                )
             }
 
             Box(
@@ -489,6 +500,13 @@ fun FileBrowserScreen(
     if (showAbout) {
         AboutDialog(onDismiss = { showAbout = false })
     }
+
+    if (treeState.visible) {
+        TreeExportDialog(
+            state = treeState,
+            onDismiss = { viewModel.dismissTreeExport() }
+        )
+    }
 }
 
 @Composable
@@ -521,32 +539,6 @@ private fun NameInputDialog(
             TextButton(onClick = onDismiss) { Text("取消") }
         }
     )
-}
-
-private fun copyUriToCache(context: Context, uri: Uri): File? {
-    return try {
-        val resolver = context.contentResolver
-        val rawName = resolver.query(uri, null, null, null, null)?.use { c ->
-            val idx = c.getColumnIndex(OpenableColumns.DISPLAY_NAME)
-            if (idx >= 0 && c.moveToFirst()) c.getString(idx) else null
-        }
-        // 提供方返回的名称不可信：去掉路径分隔符，避免写到缓存目录之外
-        val name = rawName
-            ?.substringAfterLast('/')
-            ?.substringAfterLast('\\')
-            ?.replace("\u0000", "")
-            ?.trim()
-            ?.takeUnless { it == "." || it == ".." || it.isBlank() }
-            ?: "upload_${System.currentTimeMillis()}"
-        val dir = File(context.cacheDir, "upload").apply { mkdirs() }
-        val target = File(dir, name)
-        resolver.openInputStream(uri)?.use { input ->
-            target.outputStream().use { out -> input.copyTo(out, 1 shl 16) } // 64KB 缓冲
-        } ?: return null
-        target
-    } catch (e: Exception) {
-        null
-    }
 }
 
 private suspend fun doDownload(

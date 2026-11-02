@@ -247,6 +247,21 @@ class OpenListRepositoryTest {
     }
 
     @Test
+    fun `uploadFile reports progress from zero to full size`() = runTest {
+        server.enqueue(json("""{"code":200,"data":{"task":null}}"""))
+        server.enqueue(json("""{"code":200,"data":{"size":5}}"""))
+        val progress = mutableListOf<Pair<Long, Long>>()
+
+        val result = newRepository().uploadFile(localUploadFile(), "/docs") { uploaded, total ->
+            progress += uploaded to total
+        }
+
+        assertTrue(result.isSuccess)
+        assertEquals(0L, progress.first().first)
+        assertEquals(5L to 5L, progress.last())
+    }
+
+    @Test
     fun `uploadFile polls async task until succeeded`() = runTest {
         server.enqueue(json("""{"code":200,"data":{"task":{"id":"t1","state":"pending"}}}"""))
         server.enqueue(json("""{"code":200,"data":[{"id":"t1","state":"succeeded"}]}"""))

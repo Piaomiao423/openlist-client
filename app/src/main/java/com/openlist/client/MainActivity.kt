@@ -92,6 +92,7 @@ class MainActivity : ComponentActivity() {
                                 FileBrowserScreen(
                                     sessionManager = app.sessionManager,
                                     favoritesManager = app.favoritesManager,
+                                    uploadManager = app.uploadManager,
                                     initialPath = pathArg,
                                     onLogout = { goToServers() },
                                     onOpenPreview = { path ->

@@ -43,6 +43,7 @@ import com.openlist.client.ui.theme.rememberAdaptiveDimens
 import com.openlist.client.ui.viewmodel.FileListViewModel
 import com.openlist.client.util.Downloader
 import com.openlist.client.util.FavoritesManager
+import com.openlist.client.util.FileTimeFormat
 import com.openlist.client.util.SessionManager
 import com.openlist.client.util.UploadManager
 import com.openlist.client.util.UploadStatus
@@ -128,6 +129,24 @@ fun FileBrowserScreen(
     var showAbout by remember { mutableStateOf(false) }
     var menuItem by remember { mutableStateOf<FileItem?>(null) }
     var showFabMenu by remember { mutableStateOf(false) }
+    var showDeleteSelected by remember { mutableStateOf(false) }
+    var selectionMode by remember(serverUrl) { mutableStateOf(false) }
+    var selectedNames by remember(serverUrl) { mutableStateOf<Set<String>>(emptySet()) }
+    val selectedItems = remember(state.items, selectedNames) {
+        state.items.filter { it.name in selectedNames }
+    }
+    val allSelected = state.items.isNotEmpty() && state.items.all { it.name in selectedNames }
+
+    fun exitSelectionMode() {
+        selectionMode = false
+        selectedNames = emptySet()
+        menuItem = null
+    }
+
+    // 切换目录或退出搜索时结束多选，避免选中项与当前列表不一致
+    LaunchedEffect(state.currentPath, state.searchMode) {
+        if (selectionMode) exitSelectionMode()
+    }
 
     // 上传任务由应用级 UploadManager 维护：多选文件依次上传，离开页面后仍继续
     val allUploadTasks by uploadManager.tasks.collectAsState()
@@ -196,14 +215,18 @@ fun FileBrowserScreen(
         return fullPath(item)
     }
 
-    BackHandler(enabled = state.searchMode || state.currentPath != "/") {
-        if (state.searchMode) {
-            showSearch = false
-            viewModel.saveScroll(state.currentPath, listState.firstVisibleItemIndex, listState.firstVisibleItemScrollOffset)
-            viewModel.exitSearch()
-        } else {
-            viewModel.saveScroll(state.currentPath, listState.firstVisibleItemIndex, listState.firstVisibleItemScrollOffset)
-            viewModel.goBack()
+    BackHandler(enabled = selectionMode || state.searchMode || state.currentPath != "/") {
+        when {
+            selectionMode -> exitSelectionMode()
+            state.searchMode -> {
+                showSearch = false
+                viewModel.saveScroll(state.currentPath, listState.firstVisibleItemIndex, listState.firstVisibleItemScrollOffset)
+                viewModel.exitSearch()
+            }
+            else -> {
+                viewModel.saveScroll(state.currentPath, listState.firstVisibleItemIndex, listState.firstVisibleItemScrollOffset)
+                viewModel.goBack()
+            }
         }
     }
 
@@ -212,14 +235,22 @@ fun FileBrowserScreen(
             TopAppBar(
                 title = {
                     Text(
-                        text = if (state.searchMode) "搜索：${state.searchKeyword}" else state.currentPath,
+                        text = when {
+                            selectionMode -> "已选择 ${selectedItems.size} 项"
+                            state.searchMode -> "搜索：${state.searchKeyword}"
+                            else -> state.currentPath
+                        },
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                         style = MaterialTheme.typography.titleMedium.copy(fontSize = dims.topBarTitleSize)
                     )
                 },
                 navigationIcon = {
-                    if (state.currentPath != "/" && !state.searchMode) {
+                    if (selectionMode) {
+                        IconButton(onClick = { exitSelectionMode() }) {
+                            Icon(Icons.Default.Close, contentDescription = "退出多选")
+                        }
+                    } else if (state.currentPath != "/" && !state.searchMode) {
                         IconButton(onClick = {
                             viewModel.saveScroll(state.currentPath, listState.firstVisibleItemIndex, listState.firstVisibleItemScrollOffset)
                             viewModel.goBack()
@@ -229,64 +260,120 @@ fun FileBrowserScreen(
                     }
                 },
                 actions = {
-                    IconButton(onClick = {
-                        if (state.searchMode) {
-                            showSearch = false
-                            viewModel.exitSearch()
-                        } else {
-                            showSearch = !showSearch
+                    if (selectionMode) {
+                        IconButton(onClick = {
+                            selectedNames = if (allSelected) {
+                                emptySet()
+                            } else {
+                                state.items.map { it.name }.toSet()
+                            }
+                        }) {
+                            Icon(
+                                if (allSelected) Icons.Default.Deselect else Icons.Default.SelectAll,
+                                contentDescription = if (allSelected) "取消全选" else "全选"
+                            )
                         }
-                    }) {
-                        Icon(
-                            if (state.searchMode) Icons.Default.Close else Icons.Default.Search,
-                            contentDescription = "搜索"
-                        )
-                    }
-                    IconButton(onClick = onOpenFavorites) {
-                        Icon(Icons.Default.Star, contentDescription = "收藏夹")
-                    }
-                    IconButton(onClick = { viewModel.refresh() }) {
-                        Icon(Icons.Default.Refresh, contentDescription = "刷新")
-                    }
-                    IconButton(onClick = { showAbout = true }) {
-                        Icon(Icons.Default.Info, contentDescription = "关于")
-                    }
-                    IconButton(onClick = onOpenServers) {
-                        Icon(Icons.Default.Dns, contentDescription = "服务器列表")
+                    } else {
+                        IconButton(onClick = {
+                            if (state.searchMode) {
+                                showSearch = false
+                                viewModel.exitSearch()
+                            } else {
+                                showSearch = !showSearch
+                            }
+                        }) {
+                            Icon(
+                                if (state.searchMode) Icons.Default.Close else Icons.Default.Search,
+                                contentDescription = "搜索"
+                            )
+                        }
+                        IconButton(onClick = onOpenFavorites) {
+                            Icon(Icons.Default.Star, contentDescription = "收藏夹")
+                        }
+                        IconButton(onClick = { viewModel.refresh() }) {
+                            Icon(Icons.Default.Refresh, contentDescription = "刷新")
+                        }
+                        IconButton(onClick = { showAbout = true }) {
+                            Icon(Icons.Default.Info, contentDescription = "关于")
+                        }
+                        IconButton(onClick = onOpenServers) {
+                            Icon(Icons.Default.Dns, contentDescription = "服务器列表")
+                        }
                     }
                 }
             )
         },
-        floatingActionButton = {
-            Box {
-                FloatingActionButton(onClick = { showFabMenu = true }) {
-                    Icon(
-                        if (hasActiveUpload) Icons.Default.HourglassEmpty else Icons.Default.Add,
-                        contentDescription = "更多操作"
+        bottomBar = {
+            if (selectionMode) {
+                BottomAppBar {
+                    Text(
+                        "已选择 ${selectedItems.size} 项",
+                        modifier = Modifier
+                            .weight(1f)
+                            .padding(start = 16.dp),
+                        style = MaterialTheme.typography.bodyMedium.copy(fontSize = dims.bodySize),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
                     )
+                    TextButton(
+                        onClick = { showDeleteSelected = true },
+                        enabled = selectedItems.isNotEmpty()
+                    ) {
+                        Icon(
+                            Icons.Default.Delete,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.error
+                        )
+                        Spacer(Modifier.width(4.dp))
+                        Text("删除", color = MaterialTheme.colorScheme.error)
+                    }
+                    Spacer(Modifier.width(8.dp))
                 }
-                DropdownMenu(expanded = showFabMenu, onDismissRequest = { showFabMenu = false }) {
-                    DropdownMenuItem(
-                        text = { Text("上传文件") },
-                        onClick = {
-                            showFabMenu = false
-                            uploadLauncher.launch("*/*")
+            }
+        },
+        floatingActionButton = {
+            if (!selectionMode) {
+                Box {
+                    FloatingActionButton(onClick = { showFabMenu = true }) {
+                        Icon(
+                            if (hasActiveUpload) Icons.Default.HourglassEmpty else Icons.Default.Add,
+                            contentDescription = "更多操作"
+                        )
+                    }
+                    DropdownMenu(expanded = showFabMenu, onDismissRequest = { showFabMenu = false }) {
+                        DropdownMenuItem(
+                            text = { Text("上传文件") },
+                            onClick = {
+                                showFabMenu = false
+                                uploadLauncher.launch("*/*")
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("新建文件夹") },
+                            onClick = {
+                                showFabMenu = false
+                                showNewFolderDialog = true
+                            }
+                        )
+                        if (!state.searchMode) {
+                            DropdownMenuItem(
+                                text = { Text("多选") },
+                                onClick = {
+                                    showFabMenu = false
+                                    menuItem = null
+                                    selectionMode = true
+                                    selectedNames = emptySet()
+                                }
+                            )
                         }
-                    )
-                    DropdownMenuItem(
-                        text = { Text("新建文件夹") },
-                        onClick = {
-                            showFabMenu = false
-                            showNewFolderDialog = true
-                        }
-                    )
-                    DropdownMenuItem(
-                        text = { Text("导出目录树") },
-                        onClick = {
-                            showFabMenu = false
-                            viewModel.exportTree()
-                        }
-                    )
+                        DropdownMenuItem(
+                            text = { Text("导出目录树") },
+                            onClick = {
+                                showFabMenu = false
+                                viewModel.exportTree()
+                            }
+                        )
+                    }
                 }
             }
         }
@@ -296,7 +383,7 @@ fun FileBrowserScreen(
                 .fillMaxSize()
                 .padding(padding)
         ) {
-            if (showSearch) {
+            if (showSearch && !selectionMode) {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -368,12 +455,21 @@ fun FileBrowserScreen(
                     else -> LazyColumn(state = listState, modifier = Modifier.fillMaxSize()) {
                         // 不设置自定义 key：搜索结果可能重名，重复 key 会直接抛异常退出
                         items(state.items) { item ->
+                            val selected = selectionMode && item.name in selectedNames
                             FileItemRow(
                                 item = item,
                                 isFavorite = !item.isDir && favorites.contains(pathOf(item)),
                                 parentHint = if (state.searchMode) item.parent else null,
+                                selectionMode = selectionMode,
+                                selected = selected,
                                 onClick = {
-                                    if (item.isDir) {
+                                    if (selectionMode) {
+                                        selectedNames = if (selected) {
+                                            selectedNames - item.name
+                                        } else {
+                                            selectedNames + item.name
+                                        }
+                                    } else if (item.isDir) {
                                         if (state.searchMode) {
                                             Toast.makeText(context, "搜索模式下请到对应目录操作", Toast.LENGTH_SHORT).show()
                                         } else {
@@ -395,8 +491,19 @@ fun FileBrowserScreen(
                                         }
                                     }
                                 },
-                                onLongClick = { if (!state.searchMode) menuItem = item },
-                                menuExpanded = menuItem == item,
+                                onLongClick = {
+                                    when {
+                                        selectionMode -> {
+                                            selectedNames = if (selected) {
+                                                selectedNames - item.name
+                                            } else {
+                                                selectedNames + item.name
+                                            }
+                                        }
+                                        !state.searchMode -> menuItem = item
+                                    }
+                                },
+                                menuExpanded = !selectionMode && menuItem == item,
                                 onMenuDismiss = { menuItem = null },
                                 onMenuPreview = {
                                     menuItem = null
@@ -427,6 +534,11 @@ fun FileBrowserScreen(
                                 onMenuProperties = {
                                     menuItem = null
                                     propertiesTarget = item
+                                },
+                                onMenuMultiSelect = {
+                                    menuItem = null
+                                    selectionMode = true
+                                    selectedNames = setOf(item.name)
                                 },
                                 onMenuFavorite = {
                                     menuItem = null
@@ -489,6 +601,51 @@ fun FileBrowserScreen(
             },
             dismissButton = {
                 TextButton(onClick = { deleteTarget = null }) { Text("取消") }
+            }
+        )
+    }
+
+    if (showDeleteSelected) {
+        AlertDialog(
+            onDismissRequest = { showDeleteSelected = false },
+            title = { Text("删除所选") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text("确定要删除选中的 ${selectedItems.size} 项吗？此操作不可恢复。")
+                    if (selectedItems.any { it.isDir }) {
+                        Text(
+                            "文件夹及其中的内容会被一并删除。",
+                            color = MaterialTheme.colorScheme.error,
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
+                    if (selectedItems.isNotEmpty()) {
+                        Text(
+                            selectedItems.take(5).joinToString("\n") { "• ${it.name}" } +
+                                if (selectedItems.size > 5) "\n…" else "",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    showDeleteSelected = false
+                    val items = selectedItems
+                    if (items.isEmpty()) return@TextButton
+                    viewModel.deleteItems(items) { ok, msg ->
+                        Toast.makeText(
+                            context,
+                            if (ok) "已删除 ${items.size} 项" else (msg ?: "删除失败"),
+                            Toast.LENGTH_SHORT
+                        ).show()
+                        if (ok) exitSelectionMode()
+                    }
+                }) { Text("删除", color = MaterialTheme.colorScheme.error) }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDeleteSelected = false }) { Text("取消") }
             }
         )
     }
@@ -576,6 +733,8 @@ private fun FileItemRow(
     item: FileItem,
     isFavorite: Boolean,
     parentHint: String?,
+    selectionMode: Boolean,
+    selected: Boolean,
     onClick: () -> Unit,
     onLongClick: () -> Unit,
     menuExpanded: Boolean,
@@ -586,6 +745,7 @@ private fun FileItemRow(
     onMenuRename: () -> Unit,
     onMenuDelete: () -> Unit,
     onMenuProperties: () -> Unit,
+    onMenuMultiSelect: () -> Unit,
     onMenuFavorite: () -> Unit
 ) {
     val dims = rememberAdaptiveDimens()
@@ -602,7 +762,8 @@ private fun FileItemRow(
             supportingContent = {
                 val hint = listOfNotNull(
                     parentHint?.takeIf { it.isNotBlank() },
-                    item.displaySize.takeIf { !item.isDir && it.isNotBlank() }
+                    item.displaySize.takeIf { !item.isDir && it.isNotBlank() },
+                    FileTimeFormat.display(item.modified)
                 ).joinToString(" · ")
                 if (hint.isNotEmpty()) {
                     Text(
@@ -614,13 +775,21 @@ private fun FileItemRow(
                 }
             },
             leadingContent = {
-                Icon(
-                    imageVector = if (item.isDir) Icons.Default.Folder else getFileIcon(item.fileExtension),
-                    contentDescription = null,
-                    modifier = Modifier.size(dims.iconSize),
-                    tint = if (item.isDir) MaterialTheme.colorScheme.primary
-                    else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
-                )
+                if (selectionMode) {
+                    Checkbox(
+                        checked = selected,
+                        onCheckedChange = null,
+                        modifier = Modifier.size(dims.iconSize)
+                    )
+                } else {
+                    Icon(
+                        imageVector = if (item.isDir) Icons.Default.Folder else getFileIcon(item.fileExtension),
+                        contentDescription = null,
+                        modifier = Modifier.size(dims.iconSize),
+                        tint = if (item.isDir) MaterialTheme.colorScheme.primary
+                        else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                    )
+                }
             },
             trailingContent = {
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -633,7 +802,7 @@ private fun FileItemRow(
                         )
                         Spacer(Modifier.width(4.dp))
                     }
-                    if (item.isDir) {
+                    if (item.isDir && !selectionMode) {
                         Icon(
                             Icons.Default.ChevronRight,
                             contentDescription = null,
@@ -643,6 +812,13 @@ private fun FileItemRow(
                     }
                 }
             },
+            colors = ListItemDefaults.colors(
+                containerColor = if (selected) {
+                    MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.45f)
+                } else {
+                    MaterialTheme.colorScheme.surface
+                }
+            ),
             modifier = Modifier
                 .heightIn(min = dims.listRowMinHeight)
                 .combinedClickable(onClick = onClick, onLongClick = onLongClick)
@@ -673,6 +849,10 @@ private fun FileItemRow(
             DropdownMenuItem(
                 text = { Text("属性") },
                 onClick = onMenuProperties
+            )
+            DropdownMenuItem(
+                text = { Text("多选") },
+                onClick = onMenuMultiSelect
             )
             if (!item.isDir) {
                 DropdownMenuItem(
@@ -712,8 +892,10 @@ private fun PropertiesDialog(item: FileItem, path: String, onDismiss: () -> Unit
                 if (!item.isDir) {
                     PropertyRow("大小", item.displaySize.ifBlank { "${item.size} 字节" })
                 }
-                PropertyRow("修改时间", item.modified?.ifBlank { "未知" } ?: "未知")
-                item.created?.takeIf { it.isNotBlank() }?.let { PropertyRow("创建时间", it) }
+                PropertyRow("修改时间", FileTimeFormat.display(item.modified) ?: "未知")
+                item.created?.takeIf { it.isNotBlank() }?.let {
+                    PropertyRow("创建时间", FileTimeFormat.display(it) ?: it)
+                }
                 item.sign?.takeIf { it.isNotBlank() }?.let { PropertyRow("签名", it) }
                 item.hashInfo?.takeIf { it.isNotBlank() }?.let { PropertyRow("哈希", it) }
             }

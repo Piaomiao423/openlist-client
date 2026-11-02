@@ -85,6 +85,15 @@ class OpenListRepositoryTest {
     }
 
     @Test
+    fun `listFiles maps body code 401 to UnauthorizedException`() = runTest {
+        server.enqueue(json("""{"code":401,"message":"token is expired","data":null}"""))
+
+        val error = newRepository().listFiles("/").exceptionOrNull()
+
+        assertTrue(error is UnauthorizedException)
+    }
+
+    @Test
     fun `listFiles reports transport status on server error`() = runTest {
         server.enqueue(MockResponse().setResponseCode(500))
 
@@ -317,6 +326,22 @@ class OpenListRepositoryTest {
         val error = newRepository().deleteFiles("/", listOf("a.txt")).exceptionOrNull()
 
         assertTrue(error is UnauthorizedException)
+    }
+
+    @Test
+    fun `deleteFiles sends every selected name in one request`() = runTest {
+        server.enqueue(json("""{"code":200,"data":null}"""))
+
+        val result = newRepository().deleteFiles("/docs", listOf("a.txt", "b.txt", "old"))
+
+        assertTrue(result.isSuccess)
+        val request = server.takeRequest()
+        assertEquals("/api/fs/remove", request.path)
+        val body = request.body.readUtf8()
+        assertTrue(body.contains("\"dir\":\"/docs\""))
+        assertTrue(body.contains("\"a.txt\""))
+        assertTrue(body.contains("\"b.txt\""))
+        assertTrue(body.contains("\"old\""))
     }
 
     @Test

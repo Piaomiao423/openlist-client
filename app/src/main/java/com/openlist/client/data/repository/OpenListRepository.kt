@@ -94,6 +94,7 @@ class OpenListRepository(
             if (resp.code() == 401) throw UnauthorizedException()
             if (resp.isSuccessful) {
                 val body = resp.body()
+                if (body?.code == 401) throw UnauthorizedException()
                 val url = normalizeUrl(body?.data?.url)
                 if (body?.code == 200 && url != null) {
                     val headers = parseHeaderJson(body.data?.header)
@@ -114,6 +115,7 @@ class OpenListRepository(
             if (resp.code() == 401) throw UnauthorizedException()
             if (resp.isSuccessful) {
                 val body = resp.body()
+                if (body?.code == 401) throw UnauthorizedException()
                 val url = normalizeUrl(body?.data?.rawUrl ?: body?.data?.url)
                 if (body?.code == 200 && url != null) {
                     val headers = parseHeaderJson(body.data?.header)
@@ -234,8 +236,11 @@ class OpenListRepository(
             response.code() == 401 -> Result.failure(UnauthorizedException())
             response.isSuccessful -> {
                 val body = response.body()
-                if (body?.code == 200) Result.success(body.data?.content ?: emptyList())
-                else Result.failure(Exception(body?.message ?: "未知错误"))
+                when {
+                    body?.code == 401 -> Result.failure(UnauthorizedException())
+                    body?.code == 200 -> Result.success(body.data?.content ?: emptyList())
+                    else -> Result.failure(Exception(body?.message ?: "未知错误"))
+                }
             }
             else -> Result.failure(Exception("HTTP ${response.code()}: ${response.message()}"))
         }
@@ -279,7 +284,9 @@ class OpenListRepository(
             val headerResult = headerResp.body()
             val headerOk = headerResp.isSuccessful &&
                 (headerResult == null || headerResult.code == 200)
-            if (headerResp.code() == 401) return Result.failure(UnauthorizedException())
+            if (headerResp.code() == 401 || headerResult?.code == 401) {
+                return Result.failure(UnauthorizedException())
+            }
             if (headerOk) {
                 // 若返回异步任务（OpenList 强制任务队列），轮询直到完成
                 val taskId = headerResult?.data?.task?.id
@@ -307,7 +314,8 @@ class OpenListRepository(
             )
             val queryResult = queryResp.body()
             when {
-                queryResp.code() == 401 -> Result.failure(UnauthorizedException())
+                queryResp.code() == 401 || queryResult?.code == 401 ->
+                    Result.failure(UnauthorizedException())
                 queryResp.isSuccessful &&
                     (queryResult == null || queryResult.code == 200) -> {
                     val taskId = queryResult?.data?.task?.id
@@ -337,8 +345,9 @@ class OpenListRepository(
         repeat(180) { // 最多等 3 分钟
             try {
                 val resp = api.taskInfo(tid, authHeader())
-                if (resp.code() == 401) throw UnauthorizedException()
-                val task = resp.body()?.data?.firstOrNull { it.id == tid }
+                val body = resp.body()
+                if (resp.code() == 401 || body?.code == 401) throw UnauthorizedException()
+                val task = body?.data?.firstOrNull { it.id == tid }
                 val state = task?.state
                 when (state) {
                     "succeeded" -> return null
@@ -359,16 +368,13 @@ class OpenListRepository(
     /** 上传后校验服务器端文件大小，防止任务"成功"但文件不完整；返回 null 表示一致 */
     private suspend fun verifyUploadSize(path: String, expected: Long): String? = try {
         val resp = api.getFile(FileGetRequest(path), authHeader())
-        when {
-            resp.code() == 401 -> throw UnauthorizedException()
-            else -> {
-                val size = resp.body()?.data?.size
-                if (size != null && size != expected) {
-                    "上传不完整（服务器仅接收 $size / $expected 字节），请重试"
-                } else {
-                    null
-                }
-            }
+        val body = resp.body()
+        if (resp.code() == 401 || body?.code == 401) throw UnauthorizedException()
+        val size = body?.data?.size
+        if (size != null && size != expected) {
+            "上传不完整（服务器仅接收 $size / $expected 字节），请重试"
+        } else {
+            null
         }
     } catch (e: CancellationException) { throw e } catch (e: UnauthorizedException) { throw e } catch (e: Exception) {
         null // 校验失败不阻塞主流程
@@ -380,8 +386,11 @@ class OpenListRepository(
             response.code() == 401 -> Result.failure(UnauthorizedException())
             response.isSuccessful -> {
                 val body = response.body()
-                if (body == null || body.code == 200) Result.success(Unit)
-                else Result.failure(Exception(body.message ?: "创建目录失败"))
+                when {
+                    body?.code == 401 -> Result.failure(UnauthorizedException())
+                    body == null || body.code == 200 -> Result.success(Unit)
+                    else -> Result.failure(Exception(body.message ?: "创建目录失败"))
+                }
             }
             else -> Result.failure(Exception("创建目录失败（HTTP ${response.code()}）"))
         }
@@ -395,8 +404,11 @@ class OpenListRepository(
             response.code() == 401 -> Result.failure(UnauthorizedException())
             response.isSuccessful -> {
                 val body = response.body()
-                if (body == null || body.code == 200) Result.success(Unit)
-                else Result.failure(Exception(body.message ?: "删除失败"))
+                when {
+                    body?.code == 401 -> Result.failure(UnauthorizedException())
+                    body == null || body.code == 200 -> Result.success(Unit)
+                    else -> Result.failure(Exception(body.message ?: "删除失败"))
+                }
             }
             else -> Result.failure(Exception("删除失败（HTTP ${response.code()}）"))
         }
@@ -410,8 +422,11 @@ class OpenListRepository(
             response.code() == 401 -> Result.failure(UnauthorizedException())
             response.isSuccessful -> {
                 val body = response.body()
-                if (body == null || body.code == 200) Result.success(Unit)
-                else Result.failure(Exception(body.message ?: "重命名失败"))
+                when {
+                    body?.code == 401 -> Result.failure(UnauthorizedException())
+                    body == null || body.code == 200 -> Result.success(Unit)
+                    else -> Result.failure(Exception(body.message ?: "重命名失败"))
+                }
             }
             else -> Result.failure(Exception("重命名失败（HTTP ${response.code()}）"))
         }
@@ -425,8 +440,11 @@ class OpenListRepository(
             response.code() == 401 -> Result.failure(UnauthorizedException())
             response.isSuccessful -> {
                 val body = response.body()
-                if (body?.code == 200) Result.success(body.data?.content ?: emptyList())
-                else Result.failure(Exception(body?.message ?: "搜索失败"))
+                when {
+                    body?.code == 401 -> Result.failure(UnauthorizedException())
+                    body?.code == 200 -> Result.success(body.data?.content ?: emptyList())
+                    else -> Result.failure(Exception(body?.message ?: "搜索失败"))
+                }
             }
             else -> Result.failure(Exception("HTTP ${response.code()}: ${response.message()}"))
         }

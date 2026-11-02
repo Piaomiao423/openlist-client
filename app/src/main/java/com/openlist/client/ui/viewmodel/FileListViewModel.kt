@@ -171,10 +171,15 @@ class FileListViewModel(
         }
     }
 
-    fun deleteItem(item: FileItem, onDone: (Boolean, String?) -> Unit) {
+    fun deleteItem(item: FileItem, onDone: (Boolean, String?) -> Unit) =
+        deleteItems(listOf(item), onDone)
+
+    /** 批量删除当前目录下的所选条目（一次请求提交全部名称） */
+    fun deleteItems(items: List<FileItem>, onDone: (Boolean, String?) -> Unit) {
+        if (items.isEmpty()) return
         val dir = _uiState.value.currentPath
         viewModelScope.launch {
-            repository.deleteFiles(dir, listOf(item.name)).fold(
+            repository.deleteFiles(dir, items.map { it.name }).fold(
                 onSuccess = { onDone(true, null); refresh() },
                 onFailure = { e -> onDone(false, e.message ?: "删除失败") }
             )
